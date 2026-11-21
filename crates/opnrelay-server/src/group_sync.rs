@@ -158,12 +158,13 @@ pub async fn sync_user(
     user_id: Uuid,
     oid: &str,
 ) -> Result<(), GraphError> {
-    let Some((email, status)): Option<(String, String)> =
-        sqlx::query_as("SELECT email, status FROM users WHERE id = $1 AND deleted_at IS NULL")
-            .bind(user_id)
-            .fetch_optional(&st.db)
-            .await
-            .map_err(db_err)?
+    let Some((email, status, org)): Option<(String, String, Uuid)> = sqlx::query_as(
+        "SELECT email::text, status, org_id FROM users WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_optional(&st.db)
+    .await
+    .map_err(db_err)?
     else {
         return Ok(());
     };
@@ -202,7 +203,8 @@ pub async fn sync_user(
         let want = external.is_some_and(|e| theirs.contains(&e));
         let (sql, action) = match (want, have.contains(&gid)) {
             (true, false) => (
-                "INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)",
+                "INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)
+                 ON CONFLICT DO NOTHING",
                 "group.member.added",
             ),
             (false, true) => (
@@ -211,12 +213,17 @@ pub async fn sync_user(
             ),
             _ => continue,
         };
-        sqlx::query(sql)
+        let done = sqlx::query(sql)
             .bind(gid)
             .bind(user_id)
             .execute(&mut *tx)
             .await
-            .map_err(db_err)?;
+            .map_err(db_err)?
+            .rows_affected();
+        if done == 0 {
+            // Someone else (a full sync) got there first; nothing to record.
+            continue;
+        }
         audit::record(
             &mut tx,
             &actor,
@@ -227,8 +234,84 @@ pub async fn sync_user(
         .await
         .map_err(db_err)?;
     }
+    recompute_roles(&mut tx, org, Some(user_id), &actor)
+        .await
+        .map_err(db_err)?;
     tx.commit().await.map_err(db_err)?;
     Ok(())
+}
+
+/// Put roles in line with the linked groups' `grants_role`. Returns how many
+/// roles changed. Only Microsoft-linked, non-owner, non-disabled users are touched.
+/// With no role-granting group left, managed users go back to manual and keep
+/// their role. `only_user` limits the work to one person (sign-in).
+pub async fn recompute_roles(
+    tx: &mut PgConnection,
+    org: Uuid,
+    only_user: Option<Uuid>,
+    actor: &AuditActor,
+) -> sqlx::Result<u32> {
+    let any: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM groups
+                        WHERE org_id = $1 AND source = 'idp' AND grants_role IS NOT NULL)",
+    )
+    .bind(org)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !any {
+        sqlx::query(
+            "UPDATE users SET role_source = 'manual'
+             WHERE org_id = $1 AND role_source = 'idp' AND ($2::uuid IS NULL OR id = $2)",
+        )
+        .bind(org)
+        .bind(only_user)
+        .execute(&mut *tx)
+        .await?;
+        return Ok(0);
+    }
+    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT u.id, u.org_role, r.role
+         FROM users u
+         CROSS JOIN LATERAL (
+             SELECT CASE WHEN bool_or(g.grants_role = 'admin') THEN 'admin'
+                         WHEN bool_or(g.grants_role = 'auditor') THEN 'auditor'
+                         ELSE 'member' END AS role
+             FROM group_members gm JOIN groups g ON g.id = gm.group_id
+             WHERE gm.user_id = u.id AND g.org_id = u.org_id
+               AND g.source = 'idp' AND g.grants_role IS NOT NULL
+         ) r
+         WHERE u.org_id = $1 AND u.deleted_at IS NULL AND u.org_role <> 'owner'
+           AND u.status <> 'disabled' AND ($2::uuid IS NULL OR u.id = $2)
+           AND EXISTS (SELECT 1 FROM user_identities i
+                       JOIN identity_providers ip ON ip.id = i.idp_id
+                       WHERE i.user_id = u.id AND ip.org_id = u.org_id)
+         ORDER BY u.id
+         FOR UPDATE OF u",
+    )
+    .bind(org)
+    .bind(only_user)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut changed = 0;
+    for (id, from, to) in rows {
+        sqlx::query("UPDATE users SET role_source = 'idp', org_role = $2 WHERE id = $1")
+            .bind(id)
+            .bind(&to)
+            .execute(&mut *tx)
+            .await?;
+        if from != to {
+            changed += 1;
+            audit::record(
+                &mut *tx,
+                actor,
+                Event::new("user.role.changed")
+                    .target("user", id)
+                    .meta(json!({"from": from, "to": to, "source": "microsoft"})),
+            )
+            .await?;
+        }
+    }
+    Ok(changed)
 }
 
 /// How a Graph failure is shown to an administrator.
@@ -427,6 +510,19 @@ async fn run_locked(
                 break;
             }
         }
+    }
+
+    let roles: sqlx::Result<u32> = async {
+        let mut tx = st.db.begin().await?;
+        let n = recompute_roles(&mut tx, org, None, actor).await?;
+        tx.commit().await?;
+        Ok(n)
+    }
+    .await;
+    match roles {
+        Ok(n) => sum.roles_changed = n,
+        Err(e) if sum.error.is_none() => sum.error = Some(format!("database error: {e}")),
+        Err(_) => {}
     }
 
     sqlx::query(

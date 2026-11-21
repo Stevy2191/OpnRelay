@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Organisation administration: users, invitations, policies, groups.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -29,7 +29,11 @@ pub fn router() -> Router<AppState> {
         .route("/policies", get(get_policies).put(put_policies))
         .route("/groups", get(list_groups).post(create_group))
         .route("/groups/link", post(link_group))
-        .route("/groups/{id}", delete(delete_group))
+        .route(
+            "/groups/{id}",
+            delete(delete_group).patch(update_group_role),
+        )
+        .route("/groups/{id}/role-preview", get(role_preview))
         .route("/groups/{id}/members", put(set_group_members))
 }
 
@@ -39,6 +43,9 @@ pub struct UserRow {
     email: String,
     display_name: String,
     org_role: String,
+    role_source: String,
+    /// Names of the Microsoft groups that grant this person's role.
+    role_from: Option<String>,
     status: String,
     mfa_enabled: bool,
     #[serde(with = "time::serde::rfc3339::option")]
@@ -47,7 +54,11 @@ pub struct UserRow {
     created_at: OffsetDateTime,
 }
 
-const USER_COLS: &str = "u.id, u.email::text AS email, u.display_name, u.org_role, u.status,
+const USER_COLS: &str = "u.id, u.email::text AS email, u.display_name, u.org_role, u.role_source,
+    CASE WHEN u.role_source = 'idp' THEN (SELECT string_agg(g.name, ', ' ORDER BY g.name)
+        FROM group_members gm JOIN groups g ON g.id = gm.group_id
+        WHERE gm.user_id = u.id AND g.source = 'idp' AND g.grants_role = u.org_role) END AS role_from,
+    u.status,
     EXISTS (SELECT 1 FROM mfa_factors f WHERE f.user_id = u.id AND f.confirmed_at IS NOT NULL) AS mfa_enabled,
     u.last_login_at, u.created_at";
 
@@ -226,6 +237,11 @@ async fn update_user(
     }
     if let Some(r) = &req.org_role {
         let role = OrgRole::parse(r).ok_or_else(|| ApiError::bad("invalid org_role"))?;
+        if target.role_source == "idp" {
+            return Err(ApiError::bad(
+                "This person's role is set by a Microsoft group",
+            ));
+        }
         check_role_change(&a, role)?;
         if id == a.user_id && role != a.role {
             return Err(ApiError::bad("you cannot change your own role"));
@@ -553,6 +569,9 @@ async fn delete_group(
         },
     )
     .await?;
+    if source == "idp" {
+        group_sync::recompute_roles(&mut tx, a.org_id, None, &a.audit()).await?;
+    }
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -680,10 +699,104 @@ async fn link_group(
             .meta(json!({"name": name, "external_id": external})),
     )
     .await?;
+    group_sync::recompute_roles(&mut tx, a.org_id, None, &a.audit()).await?;
     tx.commit().await?;
     let row = sqlx::query_as(&format!("{GROUP_SELECT} WHERE g.id = $1 GROUP BY g.id"))
         .bind(id)
         .fetch_one(&st.db)
         .await?;
     Ok((StatusCode::CREATED, Json(row)))
+}
+
+#[derive(Deserialize)]
+struct RoleReq {
+    grants_role: Option<String>,
+}
+
+fn check_grants(r: &Option<String>) -> ApiResult<()> {
+    match r.as_deref() {
+        None | Some("admin") | Some("auditor") => Ok(()),
+        _ => Err(ApiError::bad("grants_role must be admin, auditor or null")),
+    }
+}
+
+/// Set the role a linked Microsoft group also gives its members.
+async fn update_group_role(
+    State(st): State<AppState>,
+    CurrentUser(a): CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<RoleReq>,
+) -> ApiResult<Json<GroupRow>> {
+    require_admin(&a)?;
+    check_grants(&req.grants_role)?;
+    let mut tx = st.db.begin().await?;
+    let cur: Option<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT source, name, grants_role FROM groups WHERE id = $1 AND org_id = $2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(a.org_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((source, name, from)) = cur else {
+        return Err(ApiError::NotFound);
+    };
+    if source != "idp" {
+        return Err(ApiError::bad(
+            "Only Microsoft groups can also make members admins or auditors",
+        ));
+    }
+    sqlx::query("UPDATE groups SET grants_role = $2 WHERE id = $1")
+        .bind(id)
+        .bind(&req.grants_role)
+        .execute(&mut *tx)
+        .await?;
+    if from != req.grants_role {
+        audit::record(
+            &mut tx,
+            &a.audit(),
+            Event::new("idp.group.role_changed")
+                .target("group", id)
+                .meta(json!({"name": name, "from": from, "to": req.grants_role})),
+        )
+        .await?;
+    }
+    group_sync::recompute_roles(&mut tx, a.org_id, None, &a.audit()).await?;
+    tx.commit().await?;
+    let row = sqlx::query_as(&format!("{GROUP_SELECT} WHERE g.id = $1 GROUP BY g.id"))
+        .bind(id)
+        .fetch_one(&st.db)
+        .await?;
+    Ok(Json(row))
+}
+
+/// How many people would change role if this group's `grants_role` were set.
+/// Runs the real recomputation inside a transaction that is always rolled back.
+async fn role_preview(
+    State(st): State<AppState>,
+    CurrentUser(a): CurrentUser,
+    Path(id): Path<Uuid>,
+    Query(q): Query<RoleReq>,
+) -> ApiResult<Json<Value>> {
+    require_admin(&a)?;
+    check_grants(&q.grants_role)?;
+    let mut tx = st.db.begin().await?;
+    let source: Option<String> =
+        sqlx::query_scalar("SELECT source FROM groups WHERE id = $1 AND org_id = $2")
+            .bind(id)
+            .bind(a.org_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    match source.as_deref() {
+        None => return Err(ApiError::NotFound),
+        Some("idp") => {}
+        Some(_) => return Err(ApiError::bad("Only Microsoft groups can grant roles")),
+    }
+    sqlx::query("UPDATE groups SET grants_role = $2 WHERE id = $1")
+        .bind(id)
+        .bind(&q.grants_role)
+        .execute(&mut *tx)
+        .await?;
+    let changes = group_sync::recompute_roles(&mut tx, a.org_id, None, &a.audit()).await;
+    tx.rollback().await?;
+    Ok(Json(json!({ "changes": changes? })))
 }
