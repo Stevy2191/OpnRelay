@@ -349,6 +349,7 @@ async fn resolve_user(
     .bind(&id.subject)
     .fetch_optional(&mut *tx)
     .await?;
+    let via_subject = linked.is_some();
     let user = match linked {
         Some(u) => u,
         None => {
@@ -409,8 +410,10 @@ async fn resolve_user(
         }
     };
     match user.status.as_str() {
-        "disabled" if user.disabled_by.as_deref() == Some("microsoft") => {
-            // Microsoft only issues a token for an enabled account, so they are back.
+        "disabled" if via_subject && user.disabled_by.as_deref() == Some("microsoft") => {
+            // Found by their Microsoft id, and Microsoft only issues a token for an
+            // enabled account, so they are back. (An email match with a new id is
+            // not proof it is the same person: that stays refused.)
             sqlx::query(
                 "UPDATE users SET status = 'active', disabled_by = NULL, updated_at = now()
                  WHERE id = $1",
@@ -464,12 +467,14 @@ struct Settings {
     #[serde(with = "time::serde::rfc3339::option")]
     group_sync_last_ok_at: Option<OffsetDateTime>,
     group_sync_last_error: Option<String>,
+    group_sync_last_warning: Option<String>,
     group_sync_brake_pending: Option<i32>,
 }
 
 type SyncStatus = (
     Option<OffsetDateTime>,
     Option<OffsetDateTime>,
+    Option<String>,
     Option<String>,
     Option<i32>,
 );
@@ -484,7 +489,7 @@ async fn get_settings(
         Some(p) => {
             sqlx::query_as(
                 "SELECT group_sync_last_at, group_sync_last_ok_at, group_sync_last_error,
-                        group_sync_brake_pending FROM identity_providers WHERE id = $1",
+                        group_sync_last_warning, group_sync_brake_pending FROM identity_providers WHERE id = $1",
             )
             .bind(p.id)
             .fetch_optional(&st.db)
@@ -492,7 +497,7 @@ async fn get_settings(
         }
         None => None,
     };
-    let (last_at, last_ok_at, last_error, brake) = status.unwrap_or_default();
+    let (last_at, last_ok_at, last_error, last_warning, brake) = status.unwrap_or_default();
     Ok(Json(Settings {
         configured: p.is_some(),
         enabled: p.as_ref().is_some_and(|p| p.enabled),
@@ -516,6 +521,7 @@ async fn get_settings(
         group_sync_last_at: last_at,
         group_sync_last_ok_at: last_ok_at,
         group_sync_last_error: last_error,
+        group_sync_last_warning: last_warning,
         group_sync_brake_pending: brake,
     }))
 }

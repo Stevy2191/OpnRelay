@@ -1686,6 +1686,15 @@ async fn leaver_leaves_linked_groups() {
     set_enabled(&fake, LV, false);
     assert_eq!(sync_now(&owner).await["disabled"], 1);
     assert_eq!(member_count(&app, &gid).await, 0);
+    // Still a member in Microsoft, but a later run must not put them back.
+    sync_now(&owner).await;
+    assert_eq!(member_count(&app, &gid).await, 0);
+    // Back in Microsoft: signing in restores the account and the membership.
+    set_enabled(&fake, LV, true);
+    next_user(&fake, LV, "lee@acme.test");
+    let b = browser();
+    microsoft_flow(&b, &format!("{}/api/v1/auth/sso/microsoft/start", app.base)).await;
+    assert_eq!(member_count(&app, &gid).await, 1);
     app.cleanup().await;
 }
 
@@ -1713,12 +1722,9 @@ async fn reenable_on_sign_in_only_if_microsoft_disabled() {
     );
 
     set_enabled(&fake, LV, true);
-    let (_, b) = {
-        next_user(&fake, LV, "lee@acme.test");
-        let b = browser();
-        microsoft_flow(&b, &format!("{}/api/v1/auth/sso/microsoft/start", app.base)).await;
-        (0, b)
-    };
+    next_user(&fake, LV, "lee@acme.test");
+    let b = browser();
+    microsoft_flow(&b, &format!("{}/api/v1/auth/sso/microsoft/start", app.base)).await;
     assert_eq!(me_status(&app, &b).await, StatusCode::OK);
     assert_eq!(user_state(&app, &id).await, ("active".into(), None));
     assert_eq!(actions(&owner, "user.enabled").await, vec!["user.enabled"]);
@@ -1756,19 +1762,26 @@ async fn owner_never_disabled() {
     set_enabled(&fake, "oid-owner", false);
     let sum = sync_now(&owner).await;
     assert_eq!(sum["disabled"], 0);
+    assert!(sum["error"].is_null(), "{sum}");
+    assert!(sum["warnings"][0].as_str().unwrap().starts_with("Owner "));
+    let (err, warn, ok): (Option<String>, Option<String>, Option<time::OffsetDateTime>) =
+        sqlx::query_as(
+            "SELECT group_sync_last_error, group_sync_last_warning, group_sync_last_ok_at
+             FROM identity_providers LIMIT 1",
+        )
+        .fetch_one(&app.state().db)
+        .await
+        .unwrap();
+    assert!(err.is_none() && ok.is_some());
+    assert!(warn.unwrap().contains("is disabled in Microsoft"));
+    let st: Value = owner.get("/admin/sso").await.json().await.unwrap();
     assert!(
-        sum["error"]
+        st["group_sync_last_warning"]
             .as_str()
             .unwrap()
-            .contains("is disabled in Microsoft"),
-        "{sum}"
+            .contains("Owner ")
     );
-    let err: String =
-        sqlx::query_scalar("SELECT group_sync_last_error FROM identity_providers LIMIT 1")
-            .fetch_one(&app.state().db)
-            .await
-            .unwrap();
-    assert!(err.contains("Owner ") && err.contains("is disabled in Microsoft"));
+    assert!(actions(&owner, "idp.sync.failed").await.is_empty());
     let st: String = sqlx::query_scalar("SELECT status FROM users WHERE email = 'owner@acme.test'")
         .fetch_one(&app.state().db)
         .await
@@ -1866,5 +1879,108 @@ async fn failed_group_skips_leaver_step() {
     assert_eq!(sum["disabled"], 0);
     assert!(sum["error"].is_string());
     assert_eq!(user_state(&app, &id).await.0, "active");
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn one_enabled_identity_keeps_the_person() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    // An older Entra object for the same person, since deleted.
+    let old = "00000000-0000-0000-0000-0000000000d9";
+    sqlx::query(
+        "INSERT INTO user_identities (user_id, idp_id, subject)
+         SELECT $1::uuid, id, $2 FROM identity_providers",
+    )
+    .bind(&id)
+    .bind(old)
+    .execute(&app.state().db)
+    .await
+    .unwrap();
+    assert_eq!(sync_now(&owner).await["disabled"], 0);
+    assert_eq!(user_state(&app, &id).await.0, "active");
+    // Both gone or off: now a leaver.
+    set_enabled(&fake, LV, false);
+    assert_eq!(sync_now(&owner).await["disabled"], 1);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn upper_case_oids_match() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    sqlx::query("UPDATE user_identities SET subject = upper(subject) WHERE user_id = $1::uuid")
+        .bind(&id)
+        .execute(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(sync_now(&owner).await["disabled"], 0);
+    assert_eq!(user_state(&app, &id).await.0, "active");
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn email_match_with_new_oid_stays_refused() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    fake.lock().unwrap().users.remove(LV);
+    assert_eq!(sync_now(&owner).await["disabled"], 1);
+    let new = "00000000-0000-0000-0000-0000000000d8";
+    next_user(&fake, new, "lee@acme.test");
+    let b = browser();
+    microsoft_flow(&b, &format!("{}/api/v1/auth/sso/microsoft/start", app.base)).await;
+    assert_eq!(me_status(&app, &b).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        user_state(&app, &id).await,
+        ("disabled".into(), Some("microsoft".into()))
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM user_identities WHERE subject = $1")
+        .bind(new)
+        .fetch_one(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn confirmation_cannot_exceed_what_was_shown() {
+    let (app, fake, owner) = setup_sso().await;
+    let db = app.state().db;
+    for i in 0..50 {
+        let oid = format!("00000000-0000-0000-0000-{i:012}");
+        sqlx::query(
+            "WITH u AS (INSERT INTO users (id, org_id, email, display_name, org_role, status)
+                        SELECT gen_random_uuid(), id, $1, 'x', 'member', 'active'
+                        FROM organizations LIMIT 1 RETURNING id)
+             INSERT INTO user_identities (user_id, idp_id, subject)
+             SELECT u.id, ip.id, $2 FROM u, identity_providers ip",
+        )
+        .bind(format!("p{i}@acme.test"))
+        .bind(&oid)
+        .execute(&db)
+        .await
+        .unwrap();
+        set_enabled(&fake, &oid, i >= 11);
+    }
+    assert_eq!(sync_now(&owner).await["brake"], 11);
+    // One more person leaves before the admin confirms.
+    set_enabled(&fake, "00000000-0000-0000-0000-000000000040", false);
+    let sum: Value = owner
+        .post("/admin/sso/sync", json!({"confirm_brake": true}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(sum["disabled"], 0, "{sum}");
+    assert_eq!(sum["brake"], 12);
+    assert_eq!(pending(&app).await, Some(12));
+    let sum: Value = owner
+        .post("/admin/sso/sync", json!({"confirm_brake": true}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(sum["disabled"], 12, "{sum}");
     app.cleanup().await;
 }

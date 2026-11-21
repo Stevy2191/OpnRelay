@@ -84,7 +84,8 @@ pub async fn sync_group(
     audit::lock(&mut tx).await.map_err(db_err)?;
     let want: HashSet<Uuid> = sqlx::query_scalar::<_, Uuid>(
         "SELECT u.id FROM user_identities i JOIN users u ON u.id = i.user_id
-         WHERE i.idp_id = $1 AND i.subject = ANY($2) AND u.deleted_at IS NULL",
+         WHERE i.idp_id = $1 AND i.subject = ANY($2) AND u.deleted_at IS NULL
+           AND u.status <> 'disabled'",
     )
     .bind(p.id)
     .bind(&oids)
@@ -422,6 +423,7 @@ pub struct RunSummary {
     pub disabled: u32,
     pub missing: u32,
     pub error: Option<String>,
+    pub warnings: Vec<String>,
     pub brake: Option<u32>,
 }
 
@@ -444,66 +446,86 @@ pub fn brake_trips(to_disable: usize, linked_users: usize) -> bool {
 struct LeaverOutcome {
     disabled: u32,
     brake: Option<u32>,
-    /// Shown to the administrator (owner warnings, the brake message).
-    warning: Option<String>,
+    /// The brake message, a failure of this run.
+    error: Option<String>,
+    /// Non-fatal notes (an owner disabled in Microsoft).
+    warnings: Vec<String>,
 }
 
 /// Disable people Microsoft reports as disabled or deleted. Any Graph error
 /// returns `Err` before anything is changed. Owners are never touched.
+/// A person is a leaver only if none of their Microsoft identities is enabled.
+/// `pending` is the count the administrator was shown by an earlier brake.
 async fn disable_leavers(
     st: &AppState,
     org: Uuid,
     p: &Provider,
     actor: &AuditActor,
     confirm_brake: bool,
+    pending: Option<i32>,
 ) -> Result<LeaverOutcome, GraphError> {
     // (user, name, role, oid)
-    let linked: Vec<(Uuid, String, String, String)> = sqlx::query_as(
+    let rows: Vec<(Uuid, String, String, String)> = sqlx::query_as(
         "SELECT u.id, u.display_name, u.org_role, i.subject
          FROM user_identities i JOIN users u ON u.id = i.user_id
          WHERE i.idp_id = $1 AND u.org_id = $2 AND u.deleted_at IS NULL
            AND u.status = 'active'
-         ORDER BY u.id",
+         ORDER BY u.id, i.subject",
     )
     .bind(p.id)
     .bind(org)
     .fetch_all(&st.db)
     .await
     .map_err(db_err)?;
-    let oids: Vec<String> = linked.iter().map(|l| l.3.clone()).collect();
-    let state = graph::accounts_enabled(st, &p.app, &oids).await?;
+    let oids: Vec<String> = rows.iter().map(|r| r.3.to_ascii_lowercase()).collect();
+    let state: std::collections::HashMap<String, bool> = graph::accounts_enabled(st, &p.app, &oids)
+        .await?
+        .into_iter()
+        .map(|(k, v)| (k.to_ascii_lowercase(), v))
+        .collect();
+
+    // One entry per person: (id, name, role, identities).
+    let mut people: Vec<(Uuid, String, String, Vec<String>)> = Vec::new();
+    for (id, name, role, oid) in rows {
+        let oid = oid.to_ascii_lowercase();
+        match people.last_mut() {
+            Some(last) if last.0 == id => last.3.push(oid),
+            _ => people.push((id, name, role, vec![oid])),
+        }
+    }
+    let linked = people.len();
 
     let mut out = LeaverOutcome::default();
-    let mut owners = Vec::new();
     let mut leavers: Vec<(Uuid, &'static str)> = Vec::new();
-    for (id, name, role, oid) in &linked {
-        let reason = match state.get(oid) {
-            Some(true) => continue,
-            Some(false) => "disabled",
-            None => "deleted",
+    for (id, name, role, oids) in &people {
+        let seen: Vec<Option<bool>> = oids.iter().map(|o| state.get(o).copied()).collect();
+        if seen.contains(&Some(true)) {
+            continue;
+        }
+        let reason = if seen.contains(&Some(false)) {
+            "disabled"
+        } else {
+            "deleted"
         };
         if role == "owner" {
-            owners.push(format!("Owner {name} is disabled in Microsoft"));
+            out.warnings
+                .push(format!("Owner {name} is disabled in Microsoft"));
         } else {
             leavers.push((*id, reason));
         }
     }
-    let mut warnings = owners;
-    if brake_trips(leavers.len(), linked.len()) && !confirm_brake {
+    if brake_trips(leavers.len(), linked) {
         let n = leavers.len() as u32;
-        out.brake = Some(n);
-        warnings.insert(
-            0,
-            format!(
+        // A confirmation covers the count the administrator saw, no more.
+        let confirmed = confirm_brake && pending.is_some_and(|c| n <= c as u32);
+        if !confirmed {
+            out.brake = Some(n);
+            out.error = Some(format!(
                 "Sync would have disabled {n} people; nothing was changed. \
                  Check the Microsoft settings, then run Sync now and confirm."
-            ),
-        );
-        out.warning = Some(warnings.join("; "));
-        return Ok(out);
-    }
-    if !warnings.is_empty() {
-        out.warning = Some(warnings.join("; "));
+            ));
+            return Ok(out);
+        }
     }
     if leavers.is_empty() {
         return Ok(out);
@@ -736,14 +758,17 @@ async fn run_locked(
 
     // Leavers: only on a complete run, so a partial read never disables anyone.
     let mut clear_brake = false;
+    let mut set_warning = false;
     if let Some(e) = &sum.error {
         sum.error = Some(format!("{e} (leavers were not checked in this run)"));
     } else {
-        match disable_leavers(st, org, p, actor, confirm_brake).await {
+        match disable_leavers(st, org, p, actor, confirm_brake, prev_brake).await {
             Ok(o) => {
                 sum.disabled = o.disabled;
                 sum.brake = o.brake;
-                sum.error = o.warning;
+                sum.error = o.error;
+                sum.warnings = o.warnings;
+                set_warning = true;
                 clear_brake = o.brake.is_none();
             }
             Err(e) => {
@@ -773,13 +798,16 @@ async fn run_locked(
             group_sync_last_ok_at = CASE WHEN $2::text IS NULL THEN now() ELSE group_sync_last_ok_at END,
             group_sync_last_error = $2,
             group_sync_brake_pending = CASE WHEN $3 THEN NULL
-                                            ELSE COALESCE($4, group_sync_brake_pending) END
+                                            ELSE COALESCE($4, group_sync_brake_pending) END,
+            group_sync_last_warning = CASE WHEN $5 THEN $6 ELSE group_sync_last_warning END
          WHERE id = $1",
     )
     .bind(p.id)
     .bind(&sum.error)
     .bind(clear_brake)
     .bind(sum.brake.map(|n| n as i32))
+    .bind(set_warning)
+    .bind((!sum.warnings.is_empty()).then(|| sum.warnings.join("; ")))
     .execute(&st.db)
     .await?;
 
