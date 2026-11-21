@@ -80,6 +80,8 @@ pub async fn sync_group(
         .collect();
 
     let mut tx = st.db.begin().await.map_err(db_err)?;
+    // Audit chain lock first, before any row this transaction writes.
+    audit::lock(&mut tx).await.map_err(db_err)?;
     let want: HashSet<Uuid> = sqlx::query_scalar::<_, Uuid>(
         "SELECT u.id FROM user_identities i JOIN users u ON u.id = i.user_id
          WHERE i.idp_id = $1 AND i.subject = ANY($2) AND u.deleted_at IS NULL",
@@ -177,6 +179,8 @@ pub async fn sync_user(
         .collect();
 
     let mut tx = st.db.begin().await.map_err(db_err)?;
+    // Audit chain lock first, before any row this transaction writes.
+    audit::lock(&mut tx).await.map_err(db_err)?;
     let linked: Vec<(Uuid, Option<String>)> = sqlx::query_as(
         "SELECT g.id, g.external_id FROM groups g
          JOIN users u ON u.org_id = g.org_id
@@ -436,6 +440,8 @@ async fn mark_missing(
     actor: &AuditActor,
 ) -> Result<u32, GraphError> {
     let mut tx = st.db.begin().await.map_err(db_err)?;
+    // Audit chain lock first, before any row this transaction writes.
+    audit::lock(&mut tx).await.map_err(db_err)?;
     let removed: Vec<Uuid> =
         sqlx::query_scalar("DELETE FROM group_members WHERE group_id = $1 RETURNING user_id")
             .bind(group_id)

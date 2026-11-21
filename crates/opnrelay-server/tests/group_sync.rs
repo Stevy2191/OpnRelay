@@ -1450,3 +1450,48 @@ async fn same_role_patch_on_managed_user_is_allowed() {
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
     app.cleanup().await;
 }
+
+#[tokio::test]
+async fn user_updated_audit_records_final_role() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    let oid = "00000000-0000-0000-0000-0000000000f5";
+    let ann = sign_in(&app, &fake, oid, "ann@acme.test").await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(IT.into(), fg("IT Admins", "security", &[oid], &[]));
+    let gid = link(&owner, IT).await;
+    grant(&owner, &gid, json!("admin")).await;
+    owner
+        .patch(
+            &format!("/admin/users/{ann}"),
+            json!({"status": "disabled"}),
+        )
+        .await;
+    set_members(&fake, IT, &[]);
+    sync_now(&owner).await;
+    let r = owner
+        .patch(
+            &format!("/admin/users/{ann}"),
+            json!({"org_role": "admin", "status": "active"}),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let ev: Value = owner
+        .get("/audit/events?action=user.updated")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let last = ev
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["metadata"]["status"] == "active")
+        .expect("user.updated with status active");
+    assert_eq!(last["metadata"]["org_role"], "member");
+    app.cleanup().await;
+}

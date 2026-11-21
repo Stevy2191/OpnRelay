@@ -282,6 +282,17 @@ async fn update_user(
             group_sync::recompute_roles(&mut tx, a.org_id, Some(id), &a.audit()).await?;
         }
     }
+    if let Some(r) = changes.get("org_role").cloned()
+        && let Some(now) =
+            sqlx::query_scalar::<_, String>("SELECT org_role FROM users WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+        && r != json!(now)
+    {
+        // A group recompute (on re-enable) changed it again: record what was kept.
+        changes.insert("org_role".into(), json!(now));
+    }
     if count_owners(&mut tx, a.org_id).await? == 0 {
         return Err(ApiError::bad(
             "the organisation must keep at least one active owner",
@@ -596,6 +607,7 @@ async fn set_group_members(
 ) -> ApiResult<StatusCode> {
     require_admin(&a)?;
     let mut tx = st.db.begin().await?;
+    audit::lock(&mut tx).await?;
     let source: Option<String> =
         sqlx::query_scalar("SELECT source FROM groups WHERE id = $1 AND org_id = $2")
             .bind(id)
