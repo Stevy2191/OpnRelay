@@ -869,5 +869,15 @@ async fn cancelled_sync_does_not_wedge_the_lock() {
     }
     assert!(last["error"].is_null(), "{last}");
     assert_eq!(last["groups"], 1);
+    // No session may still hold the sync lock (bigint key 0x6f706e72 -> classid 0, objid = the key).
+    let held: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_locks
+         WHERE locktype = 'advisory' AND classid = 0 AND objid = 1869639282 AND granted
+           AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+    )
+    .fetch_one(&app.state().db)
+    .await
+    .unwrap();
+    assert_eq!(held, 0, "the advisory lock leaked");
     app.cleanup().await;
 }
