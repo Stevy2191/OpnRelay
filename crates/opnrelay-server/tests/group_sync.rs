@@ -831,3 +831,43 @@ async fn sync_off_freezes() {
     assert_eq!(member_count(&app, &gid).await, 1);
     app.cleanup().await;
 }
+
+#[tokio::test]
+async fn cancelled_sync_does_not_wedge_the_lock() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(HR.into(), fg("HR Staff", "security", &[], &[]));
+    link(&owner, HR).await;
+
+    // The throttled Graph call makes the run take about a second; cancel the caller meanwhile.
+    fake.lock().unwrap().throttle_once = true;
+    let st = app.state();
+    let h = tokio::spawn(async move {
+        opnrelay_server::group_sync::sync_all(
+            &st,
+            &opnrelay_server::audit::AuditActor::system(),
+            false,
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    h.abort();
+
+    // Once the detached run finishes, a new sync works and the lock is free.
+    let mut last = Value::Null;
+    for _ in 0..40 {
+        last = sync_now(&owner).await;
+        if last["error"].is_null() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    assert!(last["error"].is_null(), "{last}");
+    assert_eq!(last["groups"], 1);
+    app.cleanup().await;
+}

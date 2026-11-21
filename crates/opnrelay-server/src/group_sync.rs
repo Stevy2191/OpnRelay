@@ -233,16 +233,28 @@ async fn mark_missing(
 }
 
 /// Sync every linked group. Takes a database-wide lock so overlapping runs
-/// (scheduler, "Sync now", another instance) never interleave.
+/// (scheduler, "Sync now", another instance) never interleave. The run itself
+/// is detached, so cancelling the caller (a dropped HTTP request, shutdown)
+/// cannot abandon it half-way with the lock still held.
 pub async fn sync_all(
+    st: &AppState,
+    actor: &AuditActor,
+    confirm_brake: bool,
+) -> anyhow::Result<RunSummary> {
+    let (st, actor) = (st.clone(), actor.clone());
+    tokio::spawn(async move { sync_all_inner(&st, &actor, confirm_brake).await }).await?
+}
+
+async fn sync_all_inner(
     st: &AppState,
     actor: &AuditActor,
     _confirm_brake: bool,
 ) -> anyhow::Result<RunSummary> {
     let mut sum = RunSummary::default();
-    let Some(org): Option<Uuid> = sqlx::query_scalar("SELECT id FROM organizations LIMIT 1")
-        .fetch_optional(&st.db)
-        .await?
+    let Some(org): Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM organizations ORDER BY created_at LIMIT 1")
+            .fetch_optional(&st.db)
+            .await?
     else {
         return Ok(sum);
     };
@@ -253,6 +265,20 @@ pub async fn sync_all(
     else {
         return Ok(sum);
     };
+    if !graph::tenant_is_specific(&p.app.tenant_id) {
+        let msg =
+            "Group sync needs your specific tenant ID (not organizations, common or consumers).";
+        sqlx::query(
+            "UPDATE identity_providers SET group_sync_last_at = now(), group_sync_last_error = $2
+             WHERE id = $1",
+        )
+        .bind(p.id)
+        .bind(msg)
+        .execute(&st.db)
+        .await?;
+        sum.error = Some(msg.into());
+        return Ok(sum);
+    }
 
     let mut lock = st.db.acquire().await?;
     let got: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
@@ -264,10 +290,14 @@ pub async fn sync_all(
         return Ok(sum);
     }
     let res = run_locked(st, org, &p, actor, &mut sum).await;
-    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+    let unlocked = sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
         .bind(SYNC_LOCK_KEY)
-        .execute(&mut *lock)
+        .fetch_one(&mut *lock)
         .await;
+    if !matches!(unlocked, Ok(true)) {
+        // Never hand a connection that may still hold the lock back to the pool.
+        let _ = lock.detach();
+    }
     res?;
     Ok(sum)
 }
