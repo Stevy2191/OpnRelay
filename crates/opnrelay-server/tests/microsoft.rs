@@ -1,196 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Microsoft sign-in, OneDrive backups and restore, against a fake
-//! Microsoft identity platform + Graph implemented in this file.
+//! Microsoft sign-in, OneDrive backups and restore, against the shared fake
+//! Microsoft identity platform + Graph in `common/fake_ms.rs`.
 
 mod common;
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
-use axum::extract::{Form, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Redirect};
-use axum::routing::{get, post, put};
-use axum::{Json, Router};
-use base64::Engine;
+use common::fake_ms::{
+    CLIENT, TENANT, browser, fake_microsoft, location, microsoft_flow, next_user,
+};
 use common::{TestApp, png};
-use reqwest::redirect::Policy;
+use reqwest::StatusCode;
 use serde_json::{Value, json};
-
-const TENANT: &str = "11111111-1111-1111-1111-111111111111";
-const CLIENT: &str = "22222222-2222-2222-2222-222222222222";
-
-#[derive(Default)]
-struct Fake {
-    base: String,
-    /// code -> (nonce, email, tenant)
-    codes: HashMap<String, (String, String, String)>,
-    /// Who the next authorize request signs in as.
-    next_user: (String, String),
-    uploads: HashMap<String, (String, Vec<u8>)>,
-    files: Vec<(String, String, Vec<u8>)>, // (id, name, bytes)
-    n: u64,
-}
-
-type S = Arc<Mutex<Fake>>;
-
-async fn authorize(
-    State(s): State<S>,
-    Query(q): Query<HashMap<String, String>>,
-) -> impl IntoResponse {
-    let mut f = s.lock().unwrap();
-    f.n += 1;
-    let code = format!("code{}", f.n);
-    let (email, tid) = f.next_user.clone();
-    f.codes.insert(
-        code.clone(),
-        (q.get("nonce").cloned().unwrap_or_default(), email, tid),
-    );
-    Redirect::to(&format!(
-        "{}?code={code}&state={}",
-        q["redirect_uri"], q["state"]
-    ))
-}
-
-async fn token(State(s): State<S>, Form(f): Form<HashMap<String, String>>) -> impl IntoResponse {
-    let st = s.lock().unwrap();
-    assert_eq!(f["client_id"], CLIENT);
-    assert_eq!(f["client_secret"], "s3cret");
-    match f["grant_type"].as_str() {
-        "authorization_code" => {
-            assert!(!f["code_verifier"].is_empty(), "PKCE verifier must be sent");
-            let Some((nonce, email, tid)) = st.codes.get(&f["code"]).cloned() else {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({"error": "invalid_grant"})),
-                )
-                    .into_response();
-            };
-            let claims = json!({"iss": format!("{}/{tid}/v2.0", st.base), "tid": tid, "aud": CLIENT,
-                "exp": 4_000_000_000i64, "nonce": nonce, "oid": format!("oid-{email}"),
-                "preferred_username": email, "name": "Morgan Medic"});
-            let jwt = format!(
-                "e30.{}.x",
-                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string())
-            );
-            Json(json!({"access_token": "at", "id_token": jwt, "refresh_token": "rt1"}))
-                .into_response()
-        }
-        "refresh_token" => {
-            Json(json!({"access_token": "at2", "refresh_token": "rt2"})).into_response()
-        }
-        _ => StatusCode::BAD_REQUEST.into_response(),
-    }
-}
-
-async fn me() -> Json<Value> {
-    Json(json!({"userPrincipalName": "backup@acme.test"}))
-}
-
-async fn drive(
-    State(s): State<S>,
-    Path(rest): Path<String>,
-    method: axum::http::Method,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    assert!(
-        headers.get("authorization").is_some(),
-        "Graph calls need a token"
-    );
-    let mut f = s.lock().unwrap();
-    if method == axum::http::Method::POST && rest.ends_with(":/createUploadSession") {
-        // root:/{folder}/{name}:/createUploadSession
-        let path = rest
-            .trim_start_matches("root:/")
-            .trim_end_matches(":/createUploadSession");
-        let name = path.rsplit('/').next().unwrap().to_string();
-        f.n += 1;
-        let id = format!("up{}", f.n);
-        f.uploads.insert(id.clone(), (name, Vec::new()));
-        return Json(json!({"uploadUrl": format!("{}/upload/{id}", f.base)})).into_response();
-    }
-    if method == axum::http::Method::GET && rest.ends_with(":/children") {
-        let v: Vec<Value> = f
-            .files
-            .iter()
-            .map(|(id, name, _)| json!({"id": id, "name": name}))
-            .collect();
-        return Json(json!({ "value": v })).into_response();
-    }
-    if method == axum::http::Method::DELETE && rest.starts_with("items/") {
-        let id = rest.trim_start_matches("items/").to_string();
-        f.files.retain(|(i, _, _)| i != &id);
-        return StatusCode::NO_CONTENT.into_response();
-    }
-    StatusCode::NOT_FOUND.into_response()
-}
-
-async fn upload(
-    State(s): State<S>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    body: axum::body::Bytes,
-) -> impl IntoResponse {
-    let mut f = s.lock().unwrap();
-    let range = headers["content-range"].to_str().unwrap().to_string(); // bytes a-b/total
-    let total: usize = range.rsplit('/').next().unwrap().parse().unwrap();
-    let done = {
-        let (_, data) = f.uploads.get_mut(&id).unwrap();
-        data.extend_from_slice(&body);
-        data.len() == total
-    };
-    if done {
-        let (name, data) = f.uploads.remove(&id).unwrap();
-        f.n += 1;
-        let fid = format!("file{}", f.n);
-        f.files.push((fid, name, data));
-        return StatusCode::CREATED.into_response();
-    }
-    StatusCode::ACCEPTED.into_response()
-}
-
-async fn fake_microsoft() -> (String, S) {
-    let s: S = Arc::new(Mutex::new(Fake::default()));
-    let app = Router::new()
-        .route("/{tenant}/oauth2/v2.0/authorize", get(authorize))
-        .route("/{tenant}/oauth2/v2.0/token", post(token))
-        .route("/v1.0/me", get(me))
-        .route("/v1.0/me/drive/{*rest}", axum::routing::any(drive))
-        .route("/upload/{id}", put(upload))
-        .with_state(s.clone());
-    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", l.local_addr().unwrap());
-    s.lock().unwrap().base = base.clone();
-    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
-    (base, s)
-}
-
-fn browser() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .unwrap()
-}
-
-fn location(r: &reqwest::Response) -> String {
-    r.headers()["location"].to_str().unwrap().to_string()
-}
-
-/// Walk start -> Microsoft authorize -> callback in one browser.
-async fn microsoft_flow(b: &reqwest::Client, start: &str) -> reqwest::Response {
-    let r = b.get(start).send().await.unwrap();
-    assert!(
-        r.status().is_redirection(),
-        "start must redirect, got {}",
-        r.status()
-    );
-    let ms = location(&r);
-    assert!(ms.contains("code_challenge_method=S256"));
-    let r = b.get(&ms).send().await.unwrap();
-    let cb = location(&r);
-    b.get(&cb).send().await.unwrap()
-}
 
 #[tokio::test]
 async fn microsoft_sign_in_onedrive_backup_and_restore() {
@@ -225,7 +44,7 @@ async fn microsoft_sign_in_onedrive_backup_and_restore() {
     assert_eq!(providers, json!({"microsoft": true, "password": true}));
 
     // A new employee signs in with Microsoft and is created automatically.
-    fake.lock().unwrap().next_user = ("morgan@acme.test".into(), TENANT.into());
+    next_user(&fake, "oid-morgan@acme.test", "morgan@acme.test");
     let b = browser();
     let r = microsoft_flow(
         &b,
@@ -246,6 +65,7 @@ async fn microsoft_sign_in_onedrive_backup_and_restore() {
 
     // A Microsoft account from another tenant is refused.
     fake.lock().unwrap().next_user = (
+        "oid-eve@other.test".into(),
         "eve@other.test".into(),
         "33333333-3333-3333-3333-333333333333".into(),
     );
@@ -257,7 +77,7 @@ async fn microsoft_sign_in_onedrive_backup_and_restore() {
     );
 
     // The callback cannot be completed in a different browser (login CSRF).
-    fake.lock().unwrap().next_user = ("morgan@acme.test".into(), TENANT.into());
+    next_user(&fake, "oid-morgan@acme.test", "morgan@acme.test");
     let b1 = browser();
     let r = b1
         .get(format!("{api}/auth/sso/microsoft/start"))
