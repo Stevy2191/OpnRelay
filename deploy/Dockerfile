@@ -33,8 +33,13 @@ LABEL org.opencontainers.image.title="OpnRelay" \
       org.opencontainers.image.source="https://github.com/stevy2191/opnrelay"
 COPY --from=build /opnrelay-server /usr/local/bin/opnrelay-server
 COPY --from=build --chown=65532:65532 /data /data
+# Desktop recorder installers and extension packages (filled by the release
+# workflow; empty in local builds). Offered to admins on the Downloads page.
+COPY deploy/downloads/ /opt/opnrelay/downloads/
 ENV OPNRELAY_BIND=0.0.0.0:8080 \
     OPNRELAY_STORAGE=fs:///data/media \
+    OPNRELAY_BACKUP_DIR=/data/backups \
+    OPNRELAY_DOWNLOADS_DIR=/opt/opnrelay/downloads \
     OPNRELAY_LOG_FORMAT=json
 USER 65532:65532
 EXPOSE 8080

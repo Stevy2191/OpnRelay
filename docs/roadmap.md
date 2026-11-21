@@ -8,6 +8,7 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 - [x] Cargo workspace, crate skeletons, `apps/` skeletons
 - [x] CI: fmt, clippy, tests, `cargo-deny` (licences + advisories), web type check/tests/build, image build
 - [x] Dockerfile + `compose.yaml` (Caddy + server + Postgres), verified end to end
+- [x] One-line installer (Caddy HTTPS / own proxy / HTTP test), `opnrelay` helper, restore mode
 
 ## M1: Server core & web viewer
 - [x] Email/password auth, sessions, CSRF, rate limits, lockout
@@ -26,7 +27,7 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 - [ ] Element labels via platform accessibility APIs
 - [ ] Encrypted local drafts, global hotkeys, tray icon
 - [ ] Desktop auto-redaction (on-device OCR)
-- [ ] Installers (MSI, DMG, AppImage/deb/rpm)
+- [x] Installers built by the release workflow (MSI, DMG, .deb) and bundled in the server image (admin Downloads page)
 - **Demo:** record a workflow on Windows/macOS and get a guide on the server.
 
 ## M3: Exports & branding
@@ -51,10 +52,12 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 
 ## M6: Enterprise auth & compliance
 - [ ] WebAuthn/passkeys
-- [ ] OIDC SSO + group mapping, then SAML 2.0
+- [x] Microsoft Entra ID sign-in (OIDC + PKCE), automatic accounts, Microsoft-only mode
+- [ ] Entra group → role mapping; SAML 2.0 for other providers
 - [x] Auditor role, audit log search/export/verify (done in M1)
 - [x] Legal hold (done in M1)
-- [ ] Retention policies, user data export/erasure
+- [x] Scheduled encrypted backups (local + OneDrive) with retention and tested restore
+- [ ] Content retention policies, user data export/erasure
 
 ## M7: Video & GIF
 - [ ] Desktop video recording (steps + video), extension tab recording

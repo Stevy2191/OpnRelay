@@ -23,14 +23,17 @@ opnrelay-crypto = { version = "0.1.0", path = "../opnrelay-crypto" }
 opnrelay-export = { version = "0.1.0", path = "../opnrelay-export" }
 qrcode = { version = "0.15.0", default-features = false, features = ["svg"] }
 rand = "0.8"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "form"] }
 rust-embed = { version = "8.14.0", features = ["mime-guess"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.10"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "time", "json", "macros", "migrate", "ipnetwork"] }
+tar = { version = "0.4.46", default-features = false }
 thiserror = "2.0.21"
 time = { version = "0.3.45", features = ["serde", "formatting", "parsing", "macros"] }
 tokio = { version = "1.54.1", features = ["full"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
 totp-rs = { version = "5.7.2", features = ["otpauth", "gen_secret"] }
 tower = "0.5.3"
 tower-http = { version = "0.7.1", features = ["trace", "set-header", "limit", "compression-gzip", "request-id", "util"] }
@@ -43,5 +46,6 @@ workspace = true
 
 [dev-dependencies]
 base64 = "0.22"
+hex = "0.4.3"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "cookies", "multipart"] }
 totp-rs = { version = "5.7.2", features = ["otpauth"] }

@@ -5,8 +5,12 @@
   import { session } from '../lib/session.svelte';
   import { errorText, when } from '../lib/format';
   import BrandingSettings from './BrandingSettings.svelte';
+  import SsoSettings from './SsoSettings.svelte';
+  import BackupSettings from './BackupSettings.svelte';
+  import { route, query } from '../lib/router.svelte';
 
-  let tab = $state<'users' | 'groups' | 'policies' | 'branding'>('users');
+  type Tab = 'users' | 'groups' | 'policies' | 'branding' | 'sso' | 'backups';
+  let tab = $state<Tab>((query(route.path).get('tab') as Tab) || 'users');
   let users = $state<User[]>([]);
   let groups = $state<Group[]>([]);
   let policies = $state<Policies | null>(null);
@@ -89,6 +93,8 @@
   <button role="tab" aria-selected={tab === 'groups'} class:primary={tab === 'groups'} onclick={() => (tab = 'groups')}>Groups</button>
   <button role="tab" aria-selected={tab === 'policies'} class:primary={tab === 'policies'} onclick={() => (tab = 'policies')}>Security & defaults</button>
   <button role="tab" aria-selected={tab === 'branding'} class:primary={tab === 'branding'} onclick={() => (tab = 'branding')}>Branding</button>
+  <button role="tab" aria-selected={tab === 'sso'} class:primary={tab === 'sso'} onclick={() => (tab = 'sso')}>Microsoft sign-in</button>
+  <button role="tab" aria-selected={tab === 'backups'} class:primary={tab === 'backups'} onclick={() => (tab = 'backups')}>Backups</button>
 </div>
 
 {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -171,6 +177,10 @@
   {/each}
 {:else if tab === 'branding'}
   <BrandingSettings />
+{:else if tab === 'sso'}
+  <SsoSettings />
+{:else if tab === 'backups'}
+  <BackupSettings />
 {:else if policies}
   <form class="card policies" onsubmit={savePolicies}>
     <h2>Sign-in security</h2>

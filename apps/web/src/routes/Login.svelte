@@ -4,12 +4,36 @@
   import { refresh } from '../lib/session.svelte';
   import { go } from '../lib/router.svelte';
   import { errorText } from '../lib/format';
+  import { onMount } from 'svelte';
+  import { route, query } from '../lib/router.svelte';
+
+  let providers = $state<{ microsoft: boolean; password: boolean }>({ microsoft: false, password: true });
+  onMount(async () => {
+    try {
+      providers = await api('/auth/providers');
+    } catch {
+      /* keep defaults */
+    }
+  });
+
+  function microsoft() {
+    let next = '/';
+    try {
+      next = sessionStorage.getItem('after_login') || '/';
+      sessionStorage.removeItem('after_login');
+    } catch { /* storage unavailable */ }
+    window.location.href = `/api/v1/auth/sso/microsoft/start?return_to=${encodeURIComponent(next)}`;
+  }
 
   let email = $state('');
   let password = $state('');
   let code = $state('');
   let step = $state<'password' | 'mfa'>('password');
-  let error = $state('');
+  let error = $state(ssoErrorInit());
+  function ssoErrorInit() {
+    const e = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('error');
+    return e ?? '';
+  }
   let busy = $state(false);
 
   async function submit(e: Event) {
@@ -47,6 +71,10 @@
 <div class="center-page">
   <form class="card stack" onsubmit={submit}>
     <div class="brand"><img src="/favicon.svg" alt="" /> OpnRelay</div>
+    {#if step === 'password' && providers.microsoft}
+      <button type="button" class="primary ms" onclick={microsoft}>Sign in with Microsoft</button>
+      {#if providers.password}<p class="muted small or">or use your OpnRelay password</p>{/if}
+    {/if}
     {#if step === 'password'}
       <div>
         <label for="email">Email</label>
@@ -67,3 +95,8 @@
     <p class="muted small">Forgot your password? Ask an administrator for a reset link.</p>
   </form>
 </div>
+
+<style>
+  .ms { width: 100%; justify-content: center; }
+  .or { text-align: center; margin: 0.25rem 0; }
+</style>

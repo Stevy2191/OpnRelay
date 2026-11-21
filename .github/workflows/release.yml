@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Release: build desktop installers + extension packages, bundle them into the
+# server image, publish the image to GHCR and attach everything to a GitHub
+# release. Trigger by pushing a tag like v0.2.0.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to build (e.g. v0.2.0)"
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  VERSION: ${{ github.event.inputs.version || github.ref_name }}
+  IMAGE: ghcr.io/stevy2191/opnrelay
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p opnrelay-recorder
+      - name: Build MSI (WiX v4)
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.5
+          $v = "$env:VERSION".TrimStart('v')
+          mkdir dl
+          wix build -arch x64 -d Version=$v -d BinDir=target\release packaging\windows\opnrelay-recorder.wxs -o dl\OpnRelay-Recorder-Windows-x64.msi
+          Compress-Archive -Path target\release\opnrelay-recorder.exe -DestinationPath dl\OpnRelay-Recorder-Windows-x64-portable.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: dl-windows, path: dl/ }
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
+      - run: |
+          cargo build --release --locked -p opnrelay-recorder --target aarch64-apple-darwin
+          cargo build --release --locked -p opnrelay-recorder --target x86_64-apple-darwin
+          lipo -create -output opnrelay-recorder target/aarch64-apple-darwin/release/opnrelay-recorder target/x86_64-apple-darwin/release/opnrelay-recorder
+          packaging/macos/build-dmg.sh opnrelay-recorder "$VERSION" dl
+      - uses: actions/upload-artifact@v4
+        with: { name: dl-macos, path: dl/ }
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxrandr-dev libxdo-dev libdbus-1-dev libpipewire-0.3-dev libxkbcommon-dev libegl-dev libgbm-dev clang libclang-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p opnrelay-recorder
+      - run: packaging/linux/build-deb.sh target/release/opnrelay-recorder "$VERSION" dl
+      - uses: actions/upload-artifact@v4
+        with: { name: dl-linux, path: dl/ }
+
+  extension:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/extension } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: pnpm install --frozen-lockfile && pnpm build
+      - run: |
+          mkdir -p ../../dl
+          (cd dist/chromium && zip -qr ../../../../dl/OpnRelay-Extension-Chrome-Edge.zip .)
+          (cd dist/firefox && zip -qr ../../../../dl/OpnRelay-Extension-Firefox.zip .)
+      - uses: actions/upload-artifact@v4
+        with: { name: dl-extension, path: dl/ }
+
+  image:
+    needs: [windows, macos, linux, extension]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: dl-*, merge-multiple: true, path: deploy/downloads }
+      - run: cd deploy/downloads && sha256sum $(ls | grep -v -e README.md -e .gitignore) > SHA256SUMS && cat SHA256SUMS
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.VERSION }},${{ env.IMAGE }}:latest
+          labels: org.opencontainers.image.version=${{ env.VERSION }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          generate_release_notes: true
+          files: |
+            deploy/downloads/*
+            deploy/install.sh

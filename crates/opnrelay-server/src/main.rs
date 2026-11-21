@@ -33,6 +33,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: KeysCmd,
     },
+    /// Backups: run one now, or restore one into a fresh installation.
+    Backup {
+        #[command(subcommand)]
+        cmd: BackupCmd,
+    },
     /// Exit 0 if the local server answers /healthz (for container health checks).
     Health,
     /// Audit log tools.
@@ -60,6 +65,17 @@ enum AdminCmd {
 enum KeysCmd {
     /// Print a new random 256-bit key (for OPNRELAY_MASTER_KEY).
     Generate,
+}
+
+#[derive(Subcommand)]
+enum BackupCmd {
+    /// Create a backup now (and upload it to OneDrive if connected).
+    Run,
+    /// Restore a backup file into an empty database (fresh install).
+    Restore {
+        /// Path to the .orbk file (inside the container, e.g. /data/backups/...).
+        file: std::path::PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -107,6 +123,7 @@ async fn main() -> Result<()> {
             MIGRATOR.run(&db).await.context("applying migrations")?;
             let state = AppState::new(db, cfg.clone());
             state.storage.ensure_root().await?;
+            opnrelay_server::backup::spawn_scheduler(state.clone());
             let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
             tracing::info!(addr = %cfg.bind, url = %cfg.public_url, "OpnRelay listening");
             axum::serve(
@@ -129,6 +146,28 @@ async fn main() -> Result<()> {
                 bootstrap::create_owner(&db, &cfg.public_url, &org_name, &email, &name).await?;
             println!("Owner account ready for {email}.");
             println!("Open this one-time link within 7 days to set the password:\n\n  {url}\n");
+        }
+        Cmd::Backup {
+            cmd: BackupCmd::Run,
+        } => {
+            MIGRATOR.run(&db).await?;
+            let state = AppState::new(db, cfg.clone());
+            let path =
+                opnrelay_server::backup::run(&state, opnrelay_server::audit::AuditActor::system())
+                    .await?;
+            println!("Backup written to {}", path.display());
+        }
+        Cmd::Backup {
+            cmd: BackupCmd::Restore { file },
+        } => {
+            MIGRATOR.run(&db).await?;
+            let m = opnrelay_server::backup::restore(&db, &cfg.storage_dir, &cfg.master_key, &file)
+                .await?;
+            let rows: u64 = m.tables.iter().map(|t| t.rows).sum();
+            println!(
+                "Restored backup from {} ({rows} rows, {} files).",
+                m.created_at, m.media_files
+            );
         }
         Cmd::Audit {
             cmd: AuditCmd::Verify,

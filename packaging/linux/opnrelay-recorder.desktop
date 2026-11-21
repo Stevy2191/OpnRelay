@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=OpnRelay Recorder
+Comment=Record step-by-step guides
+Exec=opnrelay-recorder
+Icon=opnrelay-recorder
+Categories=Office;Utility;
+Terminal=false

@@ -98,6 +98,7 @@ pub fn clear_session_cookie(state: &AppState) -> HeaderValue {
 #[derive(sqlx::FromRow)]
 struct SessionRow {
     session_id: Uuid,
+    auth_method: String,
     csrf_token: String,
     mfa_pending: bool,
     last_seen_at: OffsetDateTime,
@@ -156,7 +157,7 @@ async fn load_session(parts: &Parts, state: &AppState) -> ApiResult<(SessionRow,
         .filter(|t| !t.is_empty())
         .ok_or(ApiError::Unauthorized)?;
     let row: Option<SessionRow> = sqlx::query_as(
-        "SELECT s.id AS session_id, s.csrf_token, s.mfa_pending, s.last_seen_at, s.expires_at,
+        "SELECT s.id AS session_id, s.auth_method, s.csrf_token, s.mfa_pending, s.last_seen_at, s.expires_at,
                 u.id AS user_id, u.org_id, u.email::text AS email, u.display_name, u.org_role, u.status,
                 p.session_idle_minutes, p.mfa_requirement,
                 EXISTS (SELECT 1 FROM mfa_factors f WHERE f.user_id = u.id AND f.confirmed_at IS NOT NULL) AS mfa_enabled
@@ -290,7 +291,8 @@ async fn actor_from_parts(parts: &Parts, state: &AppState) -> ApiResult<Actor> {
         csrf_token: row.csrf_token,
         ip,
         mfa_enabled: row.mfa_enabled,
-        mfa_setup_required: mfa_required && !row.mfa_enabled,
+        // Microsoft sign-in counts: Entra ID enforces the company's own MFA.
+        mfa_setup_required: mfa_required && !row.mfa_enabled && row.auth_method != "sso",
     })
 }
 

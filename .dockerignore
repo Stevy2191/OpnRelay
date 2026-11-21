@@ -4,3 +4,4 @@ apps/web/dist
 deploy/secrets
 deploy/.env
 .git
+!deploy/downloads

@@ -13,6 +13,7 @@
   import Audit from './routes/Audit.svelte';
   import WorkspaceSettings from './routes/WorkspaceSettings.svelte';
   import Connect from './routes/Connect.svelte';
+  import Downloads from './routes/Downloads.svelte';
 
   onMount(refresh);
 
@@ -61,7 +62,7 @@
     <nav class="row">
       <a href="#/">Guides</a>
       {#if canAudit(me)}<a href="#/audit">Audit log</a>{/if}
-      {#if isAdmin(me)}<a href="#/admin">Admin</a>{/if}
+      {#if isAdmin(me)}<a href="#/downloads">Downloads</a><a href="#/admin">Admin</a>{/if}
       <a href="#/account" title={me.email}>{me.display_name}</a>
       <button class="small" onclick={logout}>Sign out</button>
     </nav>
@@ -80,6 +81,8 @@
       <WorkspaceSettings id={match('/workspaces/:id/settings', route.path)!.id} />
     {:else if match('/account', route.path)}
       <Account />
+    {:else if match('/downloads', route.path)}
+      <Downloads />
     {:else if match('/admin', route.path)}
       <Admin />
     {:else if match('/audit', route.path)}

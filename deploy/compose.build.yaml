@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Build the server image from this source checkout instead of pulling it:
+#   docker compose -f compose.yaml -f compose.caddy.yaml -f compose.build.yaml up -d --build
+services:
+  server:
+    image: opnrelay:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile

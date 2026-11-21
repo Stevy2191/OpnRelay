@@ -24,3 +24,7 @@ panic = "abort"
 # Optimise dependencies in dev builds (argon2, image decoding are slow unoptimised).
 [profile.dev.package."*"]
 opt-level = 2
+
+# Keep debug builds small (full debug info for this workspace is many GB).
+[profile.dev]
+debug = "line-tables-only"

@@ -15,43 +15,83 @@ the admin configures.
 | OS | Any Linux with Docker Engine 24+ and Compose v2 (Windows Server/macOS with Docker Desktop also works for testing) | |
 | Network | Port 443 reachable from user devices (LAN/VPN) | Internal DNS name, e.g. `guides.company.local` |
 
-## 2. Quick start
+## 2. One-line install
+
+On a Linux server (Ubuntu, Debian, RHEL, ...), as root:
 
 ```bash
-git clone https://github.com/stevy2191/opnrelay.git
-cd opnrelay/deploy
-cp .env.example .env          # set OPNRELAY_DOMAIN (and OPNRELAY_TLS)
-sudo ./generate-secrets.sh    # creates ./secrets/{master_key,db_password,database_url}
-docker compose up -d --build  # builds the image locally (or pulls a published tag)
-docker compose exec server opnrelay-server admin create-owner \
-    --email you@company.com --name "Your Name" --org-name "Your Company"
+curl -fsSL https://raw.githubusercontent.com/stevy2191/opnrelay/main/deploy/install.sh | sudo bash
 ```
 
-The last command prints a **one-time link**. Open it, set your password, sign in, turn on
-two-factor authentication under *Account*, create a workspace per team, and invite users
-from *Admin*. Invitation and password-reset links are shown to the admin to pass on (email
-delivery is optional and comes later), and they expire after 7 days (invites) or
-24 hours (resets).
+The installer:
+1. installs Docker (official `get.docker.com` script) if it is missing;
+2. asks how people reach OpnRelay:
+   - **HTTPS with Caddy** (recommended): Caddy runs on ports 80/443 and gets
+     certificates automatically, either from its own internal CA (internal names; trust
+     its root certificate on PCs, `opnrelay ca-cert`) or from Let's Encrypt (public DNS
+     name; give an email address);
+   - **your own reverse proxy** (nginx, IIS, Traefik, a load balancer...): OpnRelay
+     listens on `127.0.0.1:8080` (configurable) and trusts the proxy's
+     `X-Forwarded-For`;
+   - **plain HTTP for testing**: OpnRelay listens on `0.0.0.0:<port>`;
+3. asks for the company name and administrator email;
+4. writes `/opt/opnrelay/.env`, generates secrets (`/opt/opnrelay/secrets/`), pulls the
+   image `ghcr.io/stevy2191/opnrelay`, starts everything and waits until it is healthy;
+5. prints a **one-time link** for the administrator to set a password, and installs the
+   `opnrelay` helper command.
 
-**Back up `deploy/secrets/master_key` somewhere safe and separate.** Every screenshot is
-encrypted with it.
+Unattended: pass the answers as variables, e.g.
+`... | sudo OPNRELAY_MODE=caddy OPNRELAY_HOST=guides.acme.local OPNRELAY_TLS=internal
+OPNRELAY_ORG="Acme" OPNRELAY_ADMIN_EMAIL=it@acme.com OPNRELAY_YES=1 bash`
+(see the header of [`deploy/install.sh`](../deploy/install.sh) for all variables).
+
+**Back up `/opt/opnrelay/secrets/master_key` somewhere safe and separate.** Every
+screenshot and every backup is encrypted with it.
+
+### The `opnrelay` command
+
+| Command | Does |
+|---|---|
+| `opnrelay status` | Show the containers |
+| `opnrelay logs [service]` | Follow logs (default: server) |
+| `opnrelay update` | Pull the latest image and restart (migrations run automatically) |
+| `opnrelay backup` | Run a backup now |
+| `opnrelay admin-link EMAIL` | Create/recover an owner and print a one-time link |
+| `opnrelay ca-cert` | Print Caddy's root certificate (internal CA mode) |
+| `opnrelay verify-audit` | Check the audit log hash chain |
+| `opnrelay start / stop / restart / version` | |
+
+### Manual / from source
+
+```bash
+git clone https://github.com/stevy2191/opnrelay.git && cd opnrelay/deploy
+cp .env.example .env            # edit: COMPOSE_FILE, OPNRELAY_PUBLIC_URL, ...
+sudo ./generate-secrets.sh
+docker compose -f compose.yaml -f compose.caddy.yaml -f compose.build.yaml up -d --build
+docker compose exec server opnrelay-server admin create-owner --email you@company.com
+```
 
 ## 3. Compose services
 
-See [`deploy/compose.yaml`](../deploy/compose.yaml). In short:
+| File | Contents |
+|---|---|
+| [`compose.yaml`](../deploy/compose.yaml) | `server` (distroless, non-root, read-only filesystem, no capabilities) and `db` (PostgreSQL 16, not exposed) |
+| [`compose.caddy.yaml`](../deploy/compose.caddy.yaml) | Adds Caddy on 80/443 (HTTPS mode) |
+| [`compose.port.yaml`](../deploy/compose.port.yaml) | Publishes the server port on `OPNRELAY_HTTP_BIND` (own-proxy and HTTP modes) |
+| [`compose.build.yaml`](../deploy/compose.build.yaml) | Builds the image from source instead of pulling |
 
-| Service | Image | Notes |
-|---|---|---|
-| `caddy` | `caddy:2` | The only service with published ports (80/443). TLS via its internal CA or Let's Encrypt. |
-| `server` | built from [`deploy/Dockerfile`](../deploy/Dockerfile) | Distroless, non-root (uid 65532), read-only root filesystem, all capabilities dropped, `no-new-privileges`. Encrypted media in the `media` volume. Built-in health check (`opnrelay-server health`). |
-| `db` | `postgres:16-alpine` | Not exposed outside the Compose network. |
-
-Secrets are passed as files (`*_FILE` variables), never as plain environment values.
+`COMPOSE_FILE` in `.env` selects the combination. Secrets are passed as files
+(`*_FILE` variables), never as plain environment values.
 
 ### Image
-- Multi-stage build: web UI built with Node, server built with Rust, final image based on `gcr.io/distroless/cc-debian12:nonroot` (~49 MB, no shell).
+- Multi-stage build: web UI built with Node, server built with Rust, final image based on `gcr.io/distroless/cc-debian12:nonroot` (no shell).
 - The web UI is embedded in the server binary.
-- Planned for releases: multi-arch (`linux/amd64`, `linux/arm64`), Sigstore `cosign` signatures and an SBOM.
+- **Desktop recorder installers and extension packages are bundled in the image**
+  (`/opt/opnrelay/downloads`) by the release workflow and offered to administrators on
+  the in-app **Downloads** page. Nothing is downloaded at install time.
+- Published by [`.github/workflows/release.yml`](../.github/workflows/release.yml) on
+  version tags: `ghcr.io/stevy2191/opnrelay:<version>` and `:latest` (linux/amd64).
+  Planned: arm64, Sigstore signatures and an SBOM.
 
 ### Server CLI
 
@@ -97,16 +137,25 @@ Caddy options:
 
 ## 6. Backups & restore
 
-- **Database:** `docker compose exec db pg_dump -Fc opnrelay > backup.dump` (nightly, via cron or the included `backup` profile service).
-- **Media:** back up the `media` volume (already encrypted at rest).
-- **Master key:** back up **separately** (password manager / offline). Without it, media cannot be decrypted. With it plus a backup, everything can be.
-- Restore is documented and tested in CI (`deploy/tests/restore.sh`).
+Configured in the app under **Admin → Backups** (see [microsoft.md](microsoft.md) for
+OneDrive):
+- Daily backup at a chosen hour, kept on the server (`/data/backups` in the `media`
+  volume; newest *N* kept) and optionally copied to **OneDrive** (newest *M* kept).
+- Each backup is one encrypted file with the database snapshot and all screenshots.
+- **Back up now** button, download links, last result shown in the app; every run is
+  in the audit log.
+
+Restore on a new server with the installer (`OPNRELAY_RESTORE` + `OPNRELAY_RESTORE_KEY`,
+see [microsoft.md §4](microsoft.md#4-restoring)) or manually:
+`docker compose cp file server:/data/backups/x.orbk && docker compose exec server
+opnrelay-server backup restore /data/backups/x.orbk` (into an empty installation).
+
+Also keep a copy of the **master key** offline: without it backups cannot be decrypted.
 
 ## 7. Upgrades
 
 ```bash
-# set OPNRELAY_VERSION in .env
-docker compose pull && docker compose up -d
+opnrelay update        # or: set OPNRELAY_VERSION in /opt/opnrelay/.env first to pin a version
 ```
 Migrations run automatically on start (forward-only, transactional). Take a backup first.
 Release notes flag any breaking changes.
@@ -141,8 +190,14 @@ comes with a SHA-256 checksum and a free Sigstore signature so IT can verify it.
 - **Chrome Web Store:** a one-time US$5 developer registration (not yearly). Alternatively, skip the store and force-install the self-hosted `.crx` via Chrome/Edge enterprise policy on managed machines.
 - The server URL is preconfigured through managed storage in all cases.
 
+### Getting the installers
+Administrators download them from the in-app **Downloads** page (admin only). The page
+shows the server address to enter in the recorder.
+
 ### Server URL preconfiguration
-- MSI property / config file `OPNRELAY_SERVER_URL`; macOS configuration profile; Linux `/etc/opnrelay/config.toml`.
+- Windows: `msiexec /i OpnRelay-Recorder-Windows-x64.msi SERVERURL=https://guides.company.com /qn`
+  (sets `OPNRELAY_SERVER_URL` machine-wide).
+- macOS / Linux: set the `OPNRELAY_SERVER_URL` environment variable (MDM profile, `/etc/environment`).
 
 ## 9. Hardening checklist
 

@@ -9,11 +9,14 @@ use crate::state::AppState;
 pub mod admin;
 pub mod audit_log;
 pub mod auth;
+pub mod backups;
+pub mod downloads;
 pub mod exports;
 pub mod guides;
 pub mod me;
 pub mod media;
 pub mod oauth;
+pub mod sso;
 pub mod workspaces;
 
 /// All JSON API routes, mounted under `/api/v1`.
@@ -27,6 +30,9 @@ pub fn api() -> Router<AppState> {
         .merge(media::router())
         .merge(exports::router())
         .merge(oauth::router())
+        .merge(downloads::router())
+        .merge(sso::router())
+        .merge(backups::router())
         .merge(audit_log::router())
 }
 

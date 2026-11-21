@@ -1,37 +1,21 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# OpnRelay: everything runs on this machine. See docs/deployment.md.
+# OpnRelay core services. Pick how it is reached with an override file
+# (the installer sets COMPOSE_FILE in .env):
+#   compose.caddy.yaml  - Caddy terminates HTTPS on ports 80/443 (recommended)
+#   compose.port.yaml   - expose the server on OPNRELAY_HTTP_BIND, for your own
+#                         reverse proxy or plain-HTTP testing
 name: opnrelay
 
 services:
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports:
-      - "443:443"
-      - "80:80"
-    environment:
-      OPNRELAY_DOMAIN: ${OPNRELAY_DOMAIN:?set OPNRELAY_DOMAIN in .env}
-      OPNRELAY_TLS: ${OPNRELAY_TLS:-internal}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      server:
-        condition: service_healthy
-
   server:
     image: ${OPNRELAY_IMAGE:-ghcr.io/stevy2191/opnrelay}:${OPNRELAY_VERSION:-latest}
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
     restart: unless-stopped
     command: ["serve"]
     environment:
-      OPNRELAY_PUBLIC_URL: https://${OPNRELAY_DOMAIN}
+      OPNRELAY_PUBLIC_URL: ${OPNRELAY_PUBLIC_URL:?set OPNRELAY_PUBLIC_URL in .env}
       OPNRELAY_DATABASE_URL_FILE: /run/secrets/database_url
       OPNRELAY_MASTER_KEY_FILE: /run/secrets/master_key
-      OPNRELAY_TRUST_PROXY: "true"
+      OPNRELAY_TRUST_PROXY: ${OPNRELAY_TRUST_PROXY:-true}
       OPNRELAY_MAX_UPLOAD_MB: ${OPNRELAY_MAX_UPLOAD_MB:-50}
     secrets: [database_url, master_key]
     volumes:
@@ -71,5 +55,3 @@ secrets:
 volumes:
   pgdata: {}
   media: {}
-  caddy_data: {}
-  caddy_config: {}

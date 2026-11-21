@@ -41,6 +41,8 @@ struct LoginReq {
 #[derive(sqlx::FromRow)]
 struct LoginUser {
     id: Uuid,
+    org_role: String,
+    sso_only: bool,
     email: String,
     password_hash: Option<String>,
     status: String,
@@ -68,9 +70,9 @@ async fn login(
     }
 
     let user: Option<LoginUser> = sqlx::query_as(
-        "SELECT u.id, u.email::text AS email, u.password_hash, u.status, u.locked_until,
+        "SELECT u.id, u.org_role, p.sso_only, u.email::text AS email, u.password_hash, u.status, u.locked_until,
                 EXISTS (SELECT 1 FROM mfa_factors f WHERE f.user_id = u.id AND f.confirmed_at IS NOT NULL) AS mfa_enabled
-         FROM users u WHERE u.email = $1 AND u.deleted_at IS NULL",
+         FROM users u JOIN org_policies p ON p.org_id = u.org_id WHERE u.email = $1 AND u.deleted_at IS NULL",
     )
     .bind(&email)
     .fetch_optional(&st.db)
@@ -133,6 +135,20 @@ async fn login(
         return Err(ApiError::Unauthorized);
     }
 
+    // Microsoft-only mode: passwords work only for owners (break-glass access).
+    if user.sso_only && user.org_role != "owner" {
+        audit::record_now(
+            &st.db,
+            &anon,
+            Event::new("auth.login.failed")
+                .target("user", user.id)
+                .meta(json!({"reason": "sso_only"})),
+        )
+        .await?;
+        return Err(ApiError::Forbidden(
+            "sign in with Microsoft: password sign-in is turned off for your organisation",
+        ));
+    }
     sqlx::query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1")
         .bind(user.id)
         .execute(&st.db)

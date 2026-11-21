@@ -28,6 +28,10 @@ pub async fn ensure_org(db: &PgPool, name: &str) -> Result<Uuid> {
         .bind(id)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("INSERT INTO backup_settings (org_id) VALUES ($1)")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("INSERT INTO branding (org_id) VALUES ($1)")
         .bind(id)
         .execute(&mut *tx)

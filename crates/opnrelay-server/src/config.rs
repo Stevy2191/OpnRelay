@@ -23,6 +23,14 @@ pub struct Config {
     /// Trust `X-Forwarded-For` from the reverse proxy for client IPs.
     pub trust_proxy: bool,
     pub max_upload_bytes: usize,
+    /// Folder with desktop recorder / extension packages offered on the
+    /// Downloads page (filled by the installer and `opnrelay update`).
+    pub downloads_dir: Option<PathBuf>,
+    /// Where local backups are written.
+    pub backup_dir: PathBuf,
+    /// Microsoft identity platform and Graph base URLs (overridable for tests).
+    pub ms_login_url: String,
+    pub ms_graph_url: String,
 }
 
 fn var(name: &str) -> Result<Option<String>> {
@@ -81,6 +89,18 @@ impl Config {
             cookie_secure: bool_var("OPNRELAY_COOKIE_SECURE", https)?,
             trust_proxy: bool_var("OPNRELAY_TRUST_PROXY", false)?,
             max_upload_bytes: max_upload_mb * 1024 * 1024,
+            downloads_dir: var("OPNRELAY_DOWNLOADS_DIR")?.map(PathBuf::from),
+            backup_dir: var("OPNRELAY_BACKUP_DIR")?
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/data/backups")),
+            ms_login_url: var("OPNRELAY_MS_LOGIN_URL")?
+                .unwrap_or_else(|| "https://login.microsoftonline.com".into())
+                .trim_end_matches('/')
+                .to_string(),
+            ms_graph_url: var("OPNRELAY_MS_GRAPH_URL")?
+                .unwrap_or_else(|| "https://graph.microsoft.com/v1.0".into())
+                .trim_end_matches('/')
+                .to_string(),
             public_url,
         })
     }

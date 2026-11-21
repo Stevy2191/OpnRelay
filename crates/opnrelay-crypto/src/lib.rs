@@ -262,6 +262,144 @@ pub mod password {
     }
 }
 
+pub mod stream {
+    //! Chunked authenticated encryption for large files (backups).
+    //!
+    //! Layout: `MAGIC (8) || nonce prefix (7) || chunks`, each chunk is
+    //! `u32 BE ciphertext length || AES-256-GCM(chunk)`. The 12-byte nonce is
+    //! `prefix || u32 BE counter || last-flag`, so chunks cannot be reordered,
+    //! dropped or truncated without detection.
+    use std::io::{Read, Write};
+
+    use aes_gcm::aead::{Aead, KeyInit, Payload};
+    use aes_gcm::{Aes256Gcm, Nonce};
+
+    use super::{CryptoError, SecretKey, random_bytes};
+
+    pub const MAGIC: &[u8; 8] = b"ORBKUP01";
+    const CHUNK: usize = 1024 * 1024;
+
+    fn nonce(prefix: &[u8; 7], counter: u32, last: bool) -> [u8; 12] {
+        let mut n = [0u8; 12];
+        n[..7].copy_from_slice(prefix);
+        n[7..11].copy_from_slice(&counter.to_be_bytes());
+        n[11] = u8::from(last);
+        n
+    }
+
+    fn io(e: std::io::Error) -> CryptoError {
+        let _ = e;
+        CryptoError::Encrypt
+    }
+
+    fn read_full<R: Read>(r: &mut R, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut n = 0;
+        while n < buf.len() {
+            match r.read(&mut buf[n..])? {
+                0 => break,
+                k => n += k,
+            }
+        }
+        Ok(n)
+    }
+
+    pub fn encrypt<R: Read, W: Write>(
+        key: &SecretKey,
+        mut input: R,
+        mut out: W,
+    ) -> Result<(), CryptoError> {
+        let cipher =
+            Aes256Gcm::new_from_slice(key.as_bytes()).map_err(|_| CryptoError::InvalidKey)?;
+        let prefix: [u8; 7] = random_bytes();
+        out.write_all(MAGIC).map_err(io)?;
+        out.write_all(&prefix).map_err(io)?;
+        let mut cur = vec![0u8; CHUNK];
+        let mut next = vec![0u8; CHUNK];
+        let mut cur_len = read_full(&mut input, &mut cur).map_err(io)?;
+        let mut counter: u32 = 0;
+        loop {
+            let next_len = if cur_len == CHUNK {
+                read_full(&mut input, &mut next).map_err(io)?
+            } else {
+                0
+            };
+            let last = next_len == 0;
+            let ct = cipher
+                .encrypt(
+                    Nonce::from_slice(&nonce(&prefix, counter, last)),
+                    Payload {
+                        msg: &cur[..cur_len],
+                        aad: MAGIC,
+                    },
+                )
+                .map_err(|_| CryptoError::Encrypt)?;
+            out.write_all(&(ct.len() as u32).to_be_bytes())
+                .map_err(io)?;
+            out.write_all(&ct).map_err(io)?;
+            if last {
+                return out.flush().map_err(io);
+            }
+            std::mem::swap(&mut cur, &mut next);
+            cur_len = next_len;
+            counter = counter.checked_add(1).ok_or(CryptoError::Encrypt)?;
+        }
+    }
+
+    pub fn decrypt<R: Read, W: Write>(
+        key: &SecretKey,
+        mut input: R,
+        mut out: W,
+    ) -> Result<(), CryptoError> {
+        let cipher =
+            Aes256Gcm::new_from_slice(key.as_bytes()).map_err(|_| CryptoError::InvalidKey)?;
+        let mut head = [0u8; 15];
+        if read_full(&mut input, &mut head).map_err(|_| CryptoError::Decrypt)? != 15
+            || &head[..8] != MAGIC
+        {
+            return Err(CryptoError::Decrypt);
+        }
+        let prefix: [u8; 7] = head[8..].try_into().expect("7 bytes");
+        let mut counter: u32 = 0;
+        loop {
+            let mut len = [0u8; 4];
+            if read_full(&mut input, &mut len).map_err(|_| CryptoError::Decrypt)? != 4 {
+                return Err(CryptoError::Decrypt); // truncated: no final chunk seen
+            }
+            let len = u32::from_be_bytes(len) as usize;
+            if len > CHUNK + 16 {
+                return Err(CryptoError::Decrypt);
+            }
+            let mut ct = vec![0u8; len];
+            if read_full(&mut input, &mut ct).map_err(|_| CryptoError::Decrypt)? != len {
+                return Err(CryptoError::Decrypt);
+            }
+            for last in [false, true] {
+                if let Ok(pt) = cipher.decrypt(
+                    Nonce::from_slice(&nonce(&prefix, counter, last)),
+                    Payload {
+                        msg: &ct,
+                        aad: MAGIC,
+                    },
+                ) {
+                    out.write_all(&pt).map_err(|_| CryptoError::Decrypt)?;
+                    if last {
+                        let mut extra = [0u8; 1];
+                        if read_full(&mut input, &mut extra).map_err(|_| CryptoError::Decrypt)? != 0
+                        {
+                            return Err(CryptoError::Decrypt);
+                        }
+                        return out.flush().map_err(|_| CryptoError::Decrypt);
+                    }
+                    break;
+                } else if last {
+                    return Err(CryptoError::Decrypt);
+                }
+            }
+            counter = counter.checked_add(1).ok_or(CryptoError::Decrypt)?;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +454,29 @@ mod tests {
         assert!(!password::verify("x", "not a hash"));
         assert!(password::check_policy("short").is_err());
         assert!(password::check_policy("long enough pass").is_ok());
+    }
+
+    #[test]
+    fn stream_roundtrip_and_tamper() {
+        let k = SecretKey::generate();
+        for size in [0usize, 10, 1024 * 1024, 1024 * 1024 * 2 + 5] {
+            let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+            let mut enc = Vec::new();
+            stream::encrypt(&k, &data[..], &mut enc).unwrap();
+            let mut dec = Vec::new();
+            stream::decrypt(&k, &enc[..], &mut dec).unwrap();
+            assert_eq!(dec, data, "size {size}");
+            // Truncation (dropping the last chunk) is detected.
+            if size > 1024 * 1024 {
+                let first_chunk_end = 15 + 4 + 1024 * 1024 + 16;
+                assert!(stream::decrypt(&k, &enc[..first_chunk_end], &mut Vec::new()).is_err());
+            }
+            let mut bad = enc.clone();
+            let last = bad.len() - 1;
+            bad[last] ^= 1;
+            assert!(stream::decrypt(&k, &bad[..], &mut Vec::new()).is_err());
+            assert!(stream::decrypt(&SecretKey::generate(), &enc[..], &mut Vec::new()).is_err());
+        }
     }
 
     #[test]

@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# HTTPS with Caddy (automatic Let's Encrypt or Caddy's internal CA).
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    environment:
+      OPNRELAY_DOMAIN: ${OPNRELAY_DOMAIN:?set OPNRELAY_DOMAIN in .env}
+      OPNRELAY_TLS: ${OPNRELAY_TLS:-internal}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}

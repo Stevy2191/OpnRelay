@@ -1,0 +1,33 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- WiX v4: wix build -arch x64 -d Version=0.1.0 -d BinDir=target\release opnrelay-recorder.wxs -o OpnRelay-Recorder-Windows-x64.msi -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="OpnRelay Recorder" Manufacturer="OpnRelay" Version="$(Version)"
+           UpgradeCode="6f0a4a43-6a2b-4d0e-9a8e-0b5d8b7d2f11" Scope="perMachine" Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of OpnRelay Recorder is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <!-- Pre-configure the server for everyone: msiexec /i ... SERVERURL=https://guides.company.com -->
+    <Property Id="SERVERURL" Secure="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="OpnRelay Recorder">
+        <Component Id="MainExe" Guid="*">
+          <File Id="RecorderExe" Source="$(BinDir)\opnrelay-recorder.exe" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenu" Guid="*">
+        <Shortcut Id="StartMenuShortcut" Name="OpnRelay Recorder" Target="[INSTALLFOLDER]opnrelay-recorder.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\OpnRelay\Recorder" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+    <Component Id="ServerUrlEnv" Directory="INSTALLFOLDER" Condition="SERVERURL" Guid="*">
+      <Environment Id="ServerUrl" Name="OPNRELAY_SERVER_URL" Value="[SERVERURL]" System="yes" Action="set" Permanent="no" />
+      <RegistryValue Root="HKLM" Key="Software\OpnRelay\Recorder" Name="ServerUrl" Type="string" Value="[SERVERURL]" KeyPath="yes" />
+    </Component>
+    <Feature Id="Main">
+      <ComponentRef Id="MainExe" />
+      <ComponentRef Id="StartMenu" />
+      <ComponentRef Id="ServerUrlEnv" />
+    </Feature>
+  </Package>
+</Wix>

@@ -4,10 +4,13 @@
 pub mod audit;
 pub mod auth;
 pub mod authz;
+pub mod backup;
 pub mod bootstrap;
 pub mod config;
 pub mod error;
 pub mod mfa;
+pub mod microsoft;
+pub mod onedrive;
 pub mod ratelimit;
 pub mod routes;
 pub mod state;

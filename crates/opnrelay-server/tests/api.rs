@@ -1043,3 +1043,65 @@ async fn oauth_native_clients() {
     assert!(actions.contains(&"oauth.device.revoked".to_string()));
     app.cleanup().await;
 }
+
+#[tokio::test]
+async fn downloads_page() {
+    let app = TestApp::spawn().await;
+    let owner = app.owner().await;
+    let dir = app.storage.join("downloads");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("OpnRelay-Recorder-Windows-x64.msi"), b"MSI!").unwrap();
+    std::fs::write(dir.join("OpnRelay-Recorder-macOS.dmg"), b"DMG").unwrap();
+    std::fs::write(dir.join(".hidden"), b"x").unwrap();
+    let sum = hex::encode(opnrelay_crypto::sha256(b"MSI!"));
+    std::fs::write(
+        dir.join("SHA256SUMS"),
+        format!("{sum}  OpnRelay-Recorder-Windows-x64.msi\n"),
+    )
+    .unwrap();
+
+    std::fs::write(dir.join("README.md"), b"not offered").unwrap();
+    let anon = Session::new(&app.base);
+    assert_eq!(
+        anon.get("/downloads").await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let (member, _) = app.user(&owner, "m@acme.test", "member").await;
+    assert_eq!(
+        member.get("/downloads").await.status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        member
+            .get("/downloads/OpnRelay-Recorder-macOS.dmg")
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let l = json(owner.get("/downloads").await).await;
+    let files = l["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    let msi = files.iter().find(|f| f["platform"] == "windows").unwrap();
+    assert_eq!(msi["sha256"], json!(sum));
+    assert_eq!(msi["size"], 4);
+    let r = owner
+        .get("/downloads/OpnRelay-Recorder-Windows-x64.msi")
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    assert!(
+        r.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .contains("attachment")
+    );
+    assert_eq!(&r.bytes().await.unwrap()[..], b"MSI!");
+    assert_eq!(
+        owner.get("/downloads/..%2Fsecrets").await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        owner.get("/downloads/.hidden").await.status(),
+        StatusCode::NOT_FOUND
+    );
+    app.cleanup().await;
+}

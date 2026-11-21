@@ -34,6 +34,15 @@ patient/EMS data, or audit evidence. OpnRelay aims to give the same everyday wor
 | **Desktop recorder** | Record desktop workflows on Windows, macOS and Linux | Rust · egui |
 | **Browser extension** | Record workflows in Chrome, Edge and Firefox with rich element labels | TypeScript · Manifest V3 |
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stevy2191/opnrelay/main/deploy/install.sh | sudo bash
+```
+
+See [docs/deployment.md](docs/deployment.md). Microsoft sign-in and OneDrive backups:
+[docs/microsoft.md](docs/microsoft.md).
+
 ## Feature summary (v1)
 
 - Capture modes: **full screen**, **active window**, or **region around the click**; screenshots or **video/GIF**
@@ -43,7 +52,8 @@ patient/EMS data, or audit evidence. OpnRelay aims to give the same everyday wor
 - Exports: **PDF, HTML, Markdown, Word (.docx), images (PNG zip)**, plus **MP4/GIF** for recordings
 - Company branding (logo, colours, font, header/footer) on every guide and export
 - Sharing: internal links, **public links** (with expiry and password), **embeds**; admins can disable public sharing
-- Accounts: email + password with **MFA (TOTP / passkeys)**, **SSO (OIDC and SAML)**, teams and roles, and a dedicated **Auditor** role
+- Accounts: email + password with **MFA (TOTP)**, **Sign in with Microsoft (Entra ID)**, teams and roles, and a dedicated **Auditor** role
+- **Backups**: daily, encrypted, kept on the server and copied to **OneDrive**, with a one-command restore
 - Tamper-evident audit log, retention policies, legal hold
 
 ## Documentation

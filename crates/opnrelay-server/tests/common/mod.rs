@@ -22,6 +22,7 @@ pub struct TestApp {
     pub db_name: String,
     admin_url: String,
     pub storage: std::path::PathBuf,
+    pub master_key: SecretKey,
 }
 
 pub fn admin_url() -> String {
@@ -36,6 +37,13 @@ fn with_db(url: &str, db: &str) -> String {
 
 impl TestApp {
     pub async fn spawn() -> TestApp {
+        Self::spawn_with(None, None).await
+    }
+
+    /// `ms_url`: base URL of a fake Microsoft service; `key`: reuse a master key.
+    pub async fn spawn_with(ms_url: Option<String>, key: Option<SecretKey>) -> TestApp {
+        let ms = ms_url.unwrap_or_else(|| "http://127.0.0.1:9".into());
+        let master_key = key.unwrap_or_else(SecretKey::generate);
         let admin = admin_url();
         let db_name = format!("opnrelay_test_{}", Uuid::now_v7().simple());
         let admin_pool = PgPool::connect(&admin).await.expect("connect admin db");
@@ -56,11 +64,15 @@ impl TestApp {
             bind: addr,
             public_url: base.clone(),
             database_url: url,
-            master_key: SecretKey::generate(),
+            master_key: master_key.clone(),
             storage_dir: storage.clone(),
             cookie_secure: false,
             trust_proxy: false,
             max_upload_bytes: 20 * 1024 * 1024,
+            downloads_dir: Some(storage.join("downloads")),
+            backup_dir: storage.join("backups"),
+            ms_login_url: ms.clone(),
+            ms_graph_url: format!("{ms}/v1.0"),
         };
         let state = AppState::new(db.clone(), cfg);
         state.storage.ensure_root().await.unwrap();
@@ -79,6 +91,7 @@ impl TestApp {
             db_name,
             admin_url: admin,
             storage,
+            master_key,
         }
     }
 

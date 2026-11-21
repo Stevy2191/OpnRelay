@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Publish the server's HTTP port directly: for your own reverse proxy
+# (bind to 127.0.0.1) or plain-HTTP testing (bind to 0.0.0.0).
+services:
+  server:
+    ports:
+      - "${OPNRELAY_HTTP_BIND:-127.0.0.1:8080}:8080"
