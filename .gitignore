@@ -5,3 +5,4 @@ dist/
 deploy/secrets/
 *.dump
 .DS_Store
+apps/*/node_modules/

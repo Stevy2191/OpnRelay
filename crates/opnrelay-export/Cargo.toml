@@ -1,0 +1,16 @@
+[package]
+name = "opnrelay-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+opnrelay-core = { version = "0.1.0", path = "../opnrelay-core" }
+pulldown-cmark = "0.13.6"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+
+[lints]
+workspace = true

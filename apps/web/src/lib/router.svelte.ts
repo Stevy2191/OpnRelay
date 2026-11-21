@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Minimal hash router. Tokens in invite links live in the fragment so they
+// are never sent to the server or written to access logs.
+
+function current(): string {
+  const h = window.location.hash.replace(/^#/, '');
+  return h || '/';
+}
+
+export const route = $state({ path: current() });
+
+window.addEventListener('hashchange', () => {
+  route.path = current();
+});
+
+export function go(path: string) {
+  if (current() === path) return;
+  window.location.hash = path;
+}
+
+/** Match `pattern` like `/guides/:id/edit` against the current path. */
+export function match(pattern: string, path: string): Record<string, string> | null {
+  const p = pattern.split('/').filter(Boolean);
+  const s = path.split('?')[0].split('/').filter(Boolean);
+  if (p.length !== s.length) return null;
+  const out: Record<string, string> = {};
+  for (let i = 0; i < p.length; i++) {
+    if (p[i].startsWith(':')) out[p[i].slice(1)] = decodeURIComponent(s[i]);
+    else if (p[i] !== s[i]) return null;
+  }
+  return out;
+}
+
+export function query(path: string): URLSearchParams {
+  const i = path.indexOf('?');
+  return new URLSearchParams(i >= 0 ? path.slice(i + 1) : '');
+}

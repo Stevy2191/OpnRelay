@@ -1,0 +1,180 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Thin typed client for the OpnRelay REST API.
+
+export type OrgRole = 'owner' | 'admin' | 'member' | 'auditor';
+export type Perm = 'none' | 'read' | 'edit' | 'manage';
+export type StepKind = 'action' | 'text' | 'heading' | 'tip' | 'alert';
+
+export interface Me {
+  id: string;
+  email: string;
+  display_name: string;
+  org_role: OrgRole;
+  csrf_token: string;
+  mfa_enabled: boolean;
+  mfa_setup_required: boolean;
+  recovery_codes_remaining: number;
+  organization: {
+    id: string;
+    name: string;
+    mfa_requirement: 'off' | 'admins' | 'all';
+    public_links_enabled: boolean;
+    default_capture_mode: string;
+    auto_redaction_default: boolean;
+  };
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  description: string;
+  legal_hold: boolean;
+  guide_count: number;
+  created_at: string;
+  my_permission: Perm;
+}
+
+export interface Folder {
+  id: string;
+  workspace_id: string;
+  parent_id: string | null;
+  name: string;
+  position: number;
+}
+
+export interface Rect { x: number; y: number; w: number; h: number }
+
+export interface Action {
+  type: string;
+  target_label?: string;
+  target_role?: string;
+  typed_text?: string;
+  keys?: string;
+  app?: string;
+  window_title?: string;
+  url?: string;
+  x?: number;
+  y?: number;
+}
+
+export interface Step {
+  id: string;
+  kind: StepKind;
+  title: string;
+  body_md: string;
+  action?: Action | null;
+  media_id?: string | null;
+  annotations: { highlight?: Rect; crop?: Rect; boxes?: Rect[] };
+}
+
+export interface GuideSummary {
+  id: string;
+  workspace_id: string;
+  folder_id: string | null;
+  title: string;
+  description: string;
+  status: 'draft' | 'published' | 'archived';
+  classification: 'internal' | 'confidential' | 'restricted';
+  source: string;
+  revision: number;
+  current_version: number;
+  tags: string[];
+  legal_hold: boolean;
+  author_name: string | null;
+  step_count: number;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+}
+
+export interface Guide extends GuideSummary {
+  steps: Step[];
+  my_permission: Perm;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  display_name: string;
+  org_role: OrgRole;
+  status: 'invited' | 'active' | 'disabled';
+  mfa_enabled: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface Group { id: string; name: string; source: string; member_ids: string[] }
+
+export interface Member {
+  principal_type: 'user' | 'group';
+  principal_id: string;
+  role: 'manager' | 'editor' | 'viewer';
+  name?: string | null;
+}
+
+export interface AuditEvent {
+  seq: number;
+  ts: string;
+  actor_id: string | null;
+  actor_label: string;
+  actor_ip: string | null;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  metadata: Record<string, unknown>;
+  hash: string;
+}
+
+export interface Policies {
+  mfa_requirement: 'off' | 'admins' | 'all';
+  session_idle_minutes: number;
+  session_absolute_hours: number;
+  public_links_enabled: boolean;
+  default_capture_mode: 'full' | 'window' | 'region';
+  auto_redaction_default: boolean;
+  redaction_patterns: string[];
+}
+
+export class ApiError extends Error {
+  constructor(public status: number, public code: string, message: string) {
+    super(message);
+  }
+}
+
+let csrf = '';
+export function setCsrf(token: string) {
+  csrf = token;
+}
+
+type Opts = { method?: string; body?: unknown; raw?: BodyInit; contentType?: string; ifMatch?: number };
+
+export async function api<T>(path: string, opts: Opts = {}): Promise<T> {
+  const method = opts.method ?? (opts.body !== undefined || opts.raw !== undefined ? 'POST' : 'GET');
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (method !== 'GET') headers['X-CSRF-Token'] = csrf;
+  if (opts.ifMatch !== undefined) headers['If-Match'] = `"${opts.ifMatch}"`;
+  let body: BodyInit | undefined;
+  if (opts.raw !== undefined) {
+    body = opts.raw;
+    if (opts.contentType) headers['Content-Type'] = opts.contentType;
+  } else if (opts.body !== undefined) {
+    body = JSON.stringify(opts.body);
+    headers['Content-Type'] = 'application/json';
+  }
+  const res = await fetch(`/api/v1${path}`, { method, headers, body, credentials: 'same-origin' });
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  let data: unknown = undefined;
+  try {
+    data = text ? JSON.parse(text) : undefined;
+  } catch {
+    data = undefined;
+  }
+  if (!res.ok) {
+    const d = (data ?? {}) as { code?: string; detail?: string };
+    throw new ApiError(res.status, d.code ?? 'error', d.detail ?? res.statusText);
+  }
+  return data as T;
+}
+
+export const mediaUrl = (id: string) => `/api/v1/media/${id}`;

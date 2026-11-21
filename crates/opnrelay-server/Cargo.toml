@@ -1,0 +1,47 @@
+[package]
+name = "opnrelay-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ammonia = "4.2.5"
+anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["macros", "multipart"] }
+axum-extra = { version = "0.12.6", features = ["cookie", "typed-header"] }
+base64 = "0.22"
+bytes = "1.12.2"
+clap = { version = "4.6.9", features = ["derive", "env"] }
+dashmap = "6.2.1"
+futures-util = "0.3.34"
+hex = "0.4.3"
+image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+mime_guess = { version = "2.0.5", default-features = false }
+opnrelay-core = { version = "0.1.0", path = "../opnrelay-core" }
+opnrelay-crypto = { version = "0.1.0", path = "../opnrelay-crypto" }
+opnrelay-export = { version = "0.1.0", path = "../opnrelay-export" }
+qrcode = { version = "0.15.0", default-features = false, features = ["svg"] }
+rand = "0.8"
+rust-embed = { version = "8.14.0", features = ["mime-guess"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.10"
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "time", "json", "macros", "migrate", "ipnetwork"] }
+thiserror = "2.0.21"
+time = { version = "0.3.45", features = ["serde", "formatting", "parsing", "macros"] }
+tokio = { version = "1.54.1", features = ["full"] }
+totp-rs = { version = "5.7.2", features = ["otpauth", "gen_secret"] }
+tower = "0.5.3"
+tower-http = { version = "0.7.1", features = ["trace", "set-header", "limit", "compression-gzip", "request-id", "util"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+uuid = { version = "1.26.1", features = ["serde", "v7"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "cookies", "multipart"] }
+totp-rs = { version = "5.7.2", features = ["otpauth"] }
