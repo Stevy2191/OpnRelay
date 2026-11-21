@@ -1,0 +1,6 @@
+target
+**/node_modules
+apps/web/dist
+deploy/secrets
+deploy/.env
+.git

@@ -5,17 +5,18 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 ## M0: Foundations
 - [x] Product & technical design docs
 - [x] Choose licence: AGPL-3.0 ([ADR 0006](adr/0006-license.md)); `LICENSE` added
-- [ ] Cargo workspace, crate skeletons, `apps/` skeletons
-- [ ] CI: fmt, clippy, tests, `cargo-deny`, `cargo-audit`, web lint
-- [ ] Dockerfile + `compose.yaml` that boots an empty server with Postgres
+- [x] Cargo workspace, crate skeletons, `apps/` skeletons
+- [x] CI: fmt, clippy, tests, `cargo-deny` (licences + advisories), web type check/tests/build, image build
+- [x] Dockerfile + `compose.yaml` (Caddy + server + Postgres), verified end to end
 
 ## M1: Server core & web viewer
-- [ ] Email/password auth, sessions, CSRF, rate limits
-- [ ] MFA: TOTP + recovery codes
-- [ ] Org roles, workspaces, workspace roles, groups
-- [ ] Guide/step CRUD, media upload with encryption at rest
-- [ ] Audit log (hash chain) for all actions so far
-- [ ] Web UI: login, workspace/folder browsing, guide viewer, basic editor (titles, reorder, delete)
+- [x] Email/password auth, sessions, CSRF, rate limits, lockout
+- [x] MFA: TOTP + recovery codes; org policy to require MFA
+- [x] Org roles (owner/admin/member/auditor), workspaces, workspace roles, groups
+- [x] Guide/step CRUD, publish + version history + restore, duplicate, search
+- [x] Media upload (validated, re-encoded) with encryption at rest
+- [x] Audit log (hash chain) for all actions so far, with verify and CSV/JSON export
+- [x] Web UI: login, invites, workspaces/folders, guide viewer, editor (steps, screenshots via upload/paste, highlights), admin, audit log, account/MFA
 - **Demo:** create a guide by uploading screenshots manually; view it in the browser.
 
 ## M2: Desktop recorder (Windows + macOS first)
@@ -39,16 +40,17 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 
 ## M5: Editor & sharing
 - [ ] Annotations (arrows, boxes, text), crop, manual blur/box redaction
-- [ ] Tips/alerts/headings, insert/merge/split steps, record-into-existing-guide
-- [ ] Version history + restore, publish workflow
+- [x] Tips/alerts/headings, insert steps (done in M1)
+- [ ] Merge/split steps, record-into-existing-guide
+- [x] Version history + restore, publish workflow (done in M1)
 - [ ] Internal links, public links (password/expiry), embeds, admin sharing policies
-- [ ] Full-text search
 
 ## M6: Enterprise auth & compliance
 - [ ] WebAuthn/passkeys
 - [ ] OIDC SSO + group mapping, then SAML 2.0
-- [ ] Auditor role UI, audit log search/export/verify
-- [ ] Retention policies, legal hold, user data export/erasure
+- [x] Auditor role, audit log search/export/verify (done in M1)
+- [x] Legal hold (done in M1)
+- [ ] Retention policies, user data export/erasure
 
 ## M7: Video & GIF
 - [ ] Desktop video recording (steps + video), extension tab recording

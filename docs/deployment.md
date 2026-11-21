@@ -20,81 +20,71 @@ the admin configures.
 ```bash
 git clone https://github.com/stevy2191/opnrelay.git
 cd opnrelay/deploy
-cp .env.example .env          # set OPNRELAY_PUBLIC_URL, etc.
-./generate-secrets.sh         # creates ./secrets/{master_key,db_password,session_key}
-docker compose up -d
-docker compose exec server opnrelay-server admin create-owner --email you@company.com
+cp .env.example .env          # set OPNRELAY_DOMAIN (and OPNRELAY_TLS)
+sudo ./generate-secrets.sh    # creates ./secrets/{master_key,db_password,database_url}
+docker compose up -d --build  # builds the image locally (or pulls a published tag)
+docker compose exec server opnrelay-server admin create-owner \
+    --email you@company.com --name "Your Name" --org-name "Your Company"
 ```
 
-Then browse to `https://<your-host>`, log in, enrol MFA, set branding, and invite users.
+The last command prints a **one-time link**. Open it, set your password, sign in, turn on
+two-factor authentication under *Account*, create a workspace per team, and invite users
+from *Admin*. Invitation and password-reset links are shown to the admin to pass on (email
+delivery is optional and comes later), and they expire after 7 days (invites) or
+24 hours (resets).
+
+**Back up `deploy/secrets/master_key` somewhere safe and separate.** Every screenshot is
+encrypted with it.
 
 ## 3. Compose services
 
-```yaml
-# deploy/compose.yaml (planned)
-services:
-  caddy:
-    image: caddy:2
-    ports: ["443:443", "80:80"]
-    volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro, caddy_data:/data]
-    depends_on: [server]
+See [`deploy/compose.yaml`](../deploy/compose.yaml). In short:
 
-  server:
-    image: ghcr.io/stevy2191/opnrelay:${OPNRELAY_VERSION}
-    command: ["opnrelay-server", "serve", "--with-worker"]
-    env_file: .env
-    environment:
-      OPNRELAY_DATABASE_URL_FILE: /run/secrets/database_url
-      OPNRELAY_MASTER_KEY_FILE: /run/secrets/master_key
-      OPNRELAY_SESSION_KEY_FILE: /run/secrets/session_key
-      OPNRELAY_STORAGE: fs:///data/media
-    secrets: [database_url, master_key, session_key]
-    volumes: [media:/data/media]
-    read_only: true
-    tmpfs: [/tmp]
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    user: "10001:10001"
-    depends_on: { db: { condition: service_healthy } }
+| Service | Image | Notes |
+|---|---|---|
+| `caddy` | `caddy:2` | The only service with published ports (80/443). TLS via its internal CA or Let's Encrypt. |
+| `server` | built from [`deploy/Dockerfile`](../deploy/Dockerfile) | Distroless, non-root (uid 65532), read-only root filesystem, all capabilities dropped, `no-new-privileges`. Encrypted media in the `media` volume. Built-in health check (`opnrelay-server health`). |
+| `db` | `postgres:16-alpine` | Not exposed outside the Compose network. |
 
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: opnrelay
-      POSTGRES_USER: opnrelay
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-    secrets: [db_password]
-    volumes: [pgdata:/var/lib/postgresql/data]
-    healthcheck: { test: ["CMD", "pg_isready", "-U", "opnrelay"], interval: 5s }
-
-secrets:
-  master_key:   { file: ./secrets/master_key }
-  session_key:  { file: ./secrets/session_key }
-  db_password:  { file: ./secrets/db_password }
-  database_url: { file: ./secrets/database_url }
-
-volumes: { pgdata: {}, media: {}, caddy_data: {} }
-```
-
-The database is **not** exposed on any host port. Only Caddy publishes ports.
+Secrets are passed as files (`*_FILE` variables), never as plain environment values.
 
 ### Image
-- Multi-stage build: Rust (musl, static) + web assets built in Node → final image based on `gcr.io/distroless/static` (or `cgr.dev/chainguard/static`), plus a separate `-worker` variant that includes `ffmpeg`. Video features are disabled when using the slim image.
-- Multi-arch: `linux/amd64`, `linux/arm64`.
-- Signed with Sigstore `cosign`; SBOM attached.
+- Multi-stage build: web UI built with Node, server built with Rust, final image based on `gcr.io/distroless/cc-debian12:nonroot` (~49 MB, no shell).
+- The web UI is embedded in the server binary.
+- Planned for releases: multi-arch (`linux/amd64`, `linux/arm64`), Sigstore `cosign` signatures and an SBOM.
+
+### Server CLI
+
+```
+opnrelay-server serve                      # run (applies migrations first)
+opnrelay-server migrate                    # apply database migrations only
+opnrelay-server admin create-owner ...     # create or recover an owner (prints a one-time link)
+opnrelay-server keys generate              # print a new random 256-bit key
+opnrelay-server audit verify               # verify the audit log hash chain (exit 2 if broken)
+opnrelay-server health                     # container health probe
+```
 
 ## 4. Configuration (`.env`)
 
 | Variable | Example | Notes |
 |---|---|---|
-| `OPNRELAY_PUBLIC_URL` | `https://guides.company.local` | required |
+| `OPNRELAY_DOMAIN` | `guides.company.local` | required (Compose); the server's public URL is `https://<domain>` |
+| `OPNRELAY_TLS` | `internal` or `you@company.com` | Caddy's internal CA, or Let's Encrypt for public names |
 | `OPNRELAY_VERSION` | `0.1.0` | image tag |
-| `OPNRELAY_STORAGE` | `fs:///data/media` or `s3://bucket?endpoint=https://minio.local` | |
-| `OPNRELAY_SMTP_URL` | `smtps://user@mail.company.com:465` | optional; password via secret file |
-| `OPNRELAY_TRUSTED_PROXIES` | `172.16.0.0/12` | for client IP in audit log |
-| `OPNRELAY_LOG_FORMAT` | `json` | |
-| `OPNRELAY_METRICS` | `false` | enable `/metrics` on an internal port |
-| `OPNRELAY_MAX_UPLOAD_MB` | `200` | |
+| `OPNRELAY_MAX_UPLOAD_MB` | `50` | maximum upload size |
+
+Server variables (set by `compose.yaml`; relevant when running the binary directly):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `OPNRELAY_PUBLIC_URL` | (required) | external URL; `https://` enables secure cookies and HSTS |
+| `OPNRELAY_DATABASE_URL[_FILE]` | (required) | PostgreSQL URL |
+| `OPNRELAY_MASTER_KEY[_FILE]` | (required) | 64 hex chars; see `keys generate` |
+| `OPNRELAY_STORAGE` | `fs:///data/media` | encrypted object store directory |
+| `OPNRELAY_BIND` | `0.0.0.0:8080` | listen address |
+| `OPNRELAY_TRUST_PROXY` | `false` | use `X-Forwarded-For` from the reverse proxy for client IPs |
+| `OPNRELAY_LOG_FORMAT` | text | `json` for structured logs |
+| `OPNRELAY_LOG` | `info,sqlx=warn` | log filter |
 
 Organisation policies (MFA, SSO, sharing, retention, redaction) are configured in the UI,
 not via environment variables, so they are audited.

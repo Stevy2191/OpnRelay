@@ -14,8 +14,10 @@ window.addEventListener('hashchange', () => {
 });
 
 export function go(path: string) {
-  if (current() === path) return;
-  window.location.hash = path;
+  if (current() !== path) window.location.hash = path;
+  // history.replaceState() changes the hash without a hashchange event, so
+  // always sync the reactive route as well.
+  route.path = path;
 }
 
 /** Match `pattern` like `/guides/:id/edit` against the current path. */

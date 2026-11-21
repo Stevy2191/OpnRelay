@@ -1,14 +1,2 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+// SPDX-License-Identifier: AGPL-3.0-only
+//! Typed HTTP client for the OpnRelay API, shared by the desktop app and tooling. Implemented in milestone M2; see docs/api.md.

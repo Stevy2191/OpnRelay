@@ -7,8 +7,10 @@ clean, branded, shareable how-to guide: numbered steps, screenshots, highlighted
 targets, and optional video/GIF. Everything runs on infrastructure you control: no
 third-party cloud, no data leaving your network.
 
-> Status: **design phase**. This repository currently contains the product and technical
-> design documents. Code scaffolding follows the [roadmap](docs/roadmap.md).
+> Status: **early development**. Milestones M0–M1 are done: the server, web app, accounts
+> with two-factor authentication, workspaces, guides and the audit log work and run in
+> Docker. The desktop recorder, browser extension and exports are next; see the
+> [roadmap](docs/roadmap.md).
 
 ## Why
 

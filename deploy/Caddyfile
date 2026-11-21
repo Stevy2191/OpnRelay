@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# OPNRELAY_TLS=internal  -> Caddy's own CA (internal hostnames; trust its root on clients)
+# OPNRELAY_TLS=you@x.com -> automatic Let's Encrypt for a public DNS name
+{$OPNRELAY_DOMAIN} {
+	tls {$OPNRELAY_TLS}
+	encode zstd gzip
+	reverse_proxy server:8080
+	log {
+		output stdout
+		format json
+	}
+}

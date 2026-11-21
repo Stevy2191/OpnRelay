@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# OpnRelay: everything runs on this machine. See docs/deployment.md.
+name: opnrelay
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    environment:
+      OPNRELAY_DOMAIN: ${OPNRELAY_DOMAIN:?set OPNRELAY_DOMAIN in .env}
+      OPNRELAY_TLS: ${OPNRELAY_TLS:-internal}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      server:
+        condition: service_healthy
+
+  server:
+    image: ${OPNRELAY_IMAGE:-ghcr.io/stevy2191/opnrelay}:${OPNRELAY_VERSION:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    command: ["serve"]
+    environment:
+      OPNRELAY_PUBLIC_URL: https://${OPNRELAY_DOMAIN}
+      OPNRELAY_DATABASE_URL_FILE: /run/secrets/database_url
+      OPNRELAY_MASTER_KEY_FILE: /run/secrets/master_key
+      OPNRELAY_TRUST_PROXY: "true"
+      OPNRELAY_MAX_UPLOAD_MB: ${OPNRELAY_MAX_UPLOAD_MB:-50}
+    secrets: [database_url, master_key]
+    volumes:
+      - media:/data
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: opnrelay
+      POSTGRES_USER: opnrelay
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "opnrelay", "-d", "opnrelay"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+secrets:
+  master_key:
+    file: ./secrets/master_key
+  db_password:
+    file: ./secrets/db_password
+  database_url:
+    file: ./secrets/database_url
+
+volumes:
+  pgdata: {}
+  media: {}
+  caddy_data: {}
+  caddy_config: {}

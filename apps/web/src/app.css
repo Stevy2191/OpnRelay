@@ -1,0 +1,105 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #dde1e7;
+  --text: #1b1f24;
+  --muted: #5d6673;
+  --primary: #1f4fd1;
+  --primary-text: #ffffff;
+  --accent: #f59e0b;
+  --danger: #c4314b;
+  --ok: #18794e;
+  --tip: #e7f3ec;
+  --alert: #fdecec;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418;
+    --surface: #1a1f25;
+    --surface-2: #232a32;
+    --border: #2f3842;
+    --text: #e8ecf0;
+    --muted: #9aa5b1;
+    --primary: #5b84f5;
+    --tip: #17302a;
+    --alert: #3a1d22;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1 { font-size: 1.6rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1.2rem; margin: 1.5rem 0 0.75rem; }
+h3 { font-size: 1rem; margin: 1rem 0 0.5rem; }
+code { background: var(--surface-2); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
+
+button, .btn {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover:not(:disabled), .btn:hover { border-color: var(--primary); text-decoration: none; }
+button:disabled { opacity: 0.55; cursor: default; }
+button.primary, .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+button.danger { color: var(--danger); }
+button.small { padding: 0.2rem 0.55rem; font-size: 0.85rem; }
+button.ghost { border-color: transparent; background: transparent; }
+
+input, select, textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  width: 100%;
+}
+input[type='checkbox'] { width: auto; }
+textarea { resize: vertical; min-height: 4rem; }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+label { display: block; font-weight: 500; margin: 0.75rem 0 0.25rem; }
+label.inline { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.25rem; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+.row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.spread { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.stack > * + * { margin-top: 0.75rem; }
+.error { color: var(--danger); background: var(--alert); border-radius: 8px; padding: 0.5rem 0.75rem; }
+.success { color: var(--ok); background: var(--tip); border-radius: 8px; padding: 0.5rem 0.75rem; }
+.badge { display: inline-block; font-size: 0.75rem; padding: 0.05rem 0.5rem; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+.badge.published { color: var(--ok); }
+.badge.draft { color: var(--accent); }
+.badge.confidential, .badge.restricted { color: var(--danger); }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); font-weight: 600; }
+.table-wrap { overflow-x: auto; }
+
+.center-page { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
+.center-page .card { width: 100%; max-width: 400px; }
+.brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 1.1rem; }
+.brand img { width: 28px; height: 28px; }

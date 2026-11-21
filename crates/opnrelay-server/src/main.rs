@@ -33,6 +33,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: KeysCmd,
     },
+    /// Exit 0 if the local server answers /healthz (for container health checks).
+    Health,
     /// Audit log tools.
     Audit {
         #[command(subcommand)]
@@ -88,6 +90,9 @@ async fn main() -> Result<()> {
         println!("{}", opnrelay_crypto::SecretKey::generate().to_hex());
         return Ok(());
     }
+    if let Cmd::Health = cli.cmd {
+        std::process::exit(if health_probe() { 0 } else { 1 });
+    }
     init_tracing();
     let cfg = Config::from_env()?;
     let db = connect(&cfg.database_url)
@@ -134,7 +139,7 @@ async fn main() -> Result<()> {
                 std::process::exit(2);
             }
         }
-        Cmd::Keys { .. } => unreachable!(),
+        Cmd::Keys { .. } | Cmd::Health => unreachable!(),
     }
     Ok(())
 }
@@ -154,4 +159,23 @@ async fn shutdown() {
     let term = std::future::pending::<()>();
     tokio::select! { _ = ctrl_c => {}, _ = term => {} }
     tracing::info!("shutting down");
+}
+
+/// Minimal HTTP probe without extra dependencies (the runtime image has no curl).
+fn health_probe() -> bool {
+    use std::io::{Read, Write};
+    let bind = std::env::var("OPNRELAY_BIND").unwrap_or_else(|_| "0.0.0.0:8080".into());
+    let port = bind.rsplit(':').next().unwrap_or("8080");
+    let Ok(mut s) = std::net::TcpStream::connect(format!("127.0.0.1:{port}")) else {
+        return false;
+    };
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(3)));
+    if s.write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut buf = [0u8; 64];
+    let n = s.read(&mut buf).unwrap_or(0);
+    buf[..n].starts_with(b"HTTP/1.1 200")
 }
