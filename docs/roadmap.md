@@ -4,7 +4,7 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 
 ## M0: Foundations
 - [x] Product & technical design docs
-- [ ] Choose licence ([ADR 0006](adr/0006-license.md)); add `LICENSE`
+- [x] Choose licence: AGPL-3.0 ([ADR 0006](adr/0006-license.md)); `LICENSE` added
 - [ ] Cargo workspace, crate skeletons, `apps/` skeletons
 - [ ] CI: fmt, clippy, tests, `cargo-deny`, `cargo-audit`, web lint
 - [ ] Dockerfile + `compose.yaml` that boots an empty server with Postgres
@@ -49,14 +49,14 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 - [ ] OIDC SSO + group mapping, then SAML 2.0
 - [ ] Auditor role UI, audit log search/export/verify
 - [ ] Retention policies, legal hold, user data export/erasure
-- [ ] Sensitive workspace enforcement
 
 ## M7: Video & GIF
 - [ ] Desktop video recording (steps + video), extension tab recording
 - [ ] Worker transcoding, GIF generation, MP4/WebM export
 
 ## M8: Release hardening → v1.0
-- [ ] Code signing (Windows Authenticode, Apple notarisation), signed auto-updates
+- [ ] Free release signing: Tauri update key, macOS self-signed identity, GPG for Linux repos, Sigstore + checksums for all files ([ADR 0007](adr/0007-no-paid-code-signing.md))
+- [ ] Apply to SignPath Foundation for free Windows signing (optional)
 - [ ] Fuzzing, load test (40 concurrent users + bulk exports), restore drills
 - [ ] Accessibility review (WCAG 2.1 AA)
 - [ ] **External penetration test**
@@ -71,7 +71,6 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 - Multi-organisation hosting
 
 ## Cost notes
-- Apple Developer Program: about US$99/year (macOS signing/notarisation)
-- Windows code-signing certificate: about US$200–500/year (or Azure Trusted Signing, which is cheaper)
-- Chrome Web Store one-time US$5; Firefox AMO and Edge Add-ons are free
-- Hosting: an existing internal VM is typically sufficient
+- **No yearly fees.** No paid Apple or Microsoft signing certificates ([ADR 0007](adr/0007-no-paid-code-signing.md)).
+- Optional one-time US$5 for the Chrome Web Store (avoidable via enterprise force-install); Firefox AMO and Edge Add-ons are free.
+- Hosting: an existing internal VM is typically sufficient.

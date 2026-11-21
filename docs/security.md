@@ -1,14 +1,16 @@
 # Security & Compliance Design
 
-OpnRelay will hold screenshots from HR systems (employee PII), EMS systems (potentially
-**PHI**), and audit evidence. Assume every screenshot is sensitive.
+OpnRelay will hold screenshots from HR systems, EMS systems and audit work. The platform
+protects all guides equally (encryption, access control, audit log). **What appears in a
+guide is the author's decision**: redaction tools are offered, not forced, and no
+department is restricted.
 
 > OpnRelay provides technical controls. Compliance (HIPAA, GDPR, SOC 2 and others) is a
 > property of how an organisation deploys and operates it, not of the software alone.
 
 ## 1. Security goals
 
-1. Sensitive data in screenshots is **redacted before it leaves the user's device**.
+1. When a user chooses redaction, it happens **before the screenshot leaves their device**.
 2. Only authorised users can see a guide; every access to sensitive content is **auditable**.
 3. A stolen disk, backup, or database dump does not expose screenshots (**encryption at rest**).
 4. The audit trail is **tamper-evident**.
@@ -24,15 +26,15 @@ OpnRelay will hold screenshots from HR systems (employee PII), EMS systems (pote
 | Screenshots (in transit) | Interception | TLS 1.2+ only (Caddy), HSTS; certificate pinning optional for desktop |
 | Screenshots (at rest, server) | Disk/backup theft | Envelope encryption: AES-256-GCM per-object data key, wrapped by a master key (KEK) held outside the DB |
 | Screenshots (at rest, client) | Laptop theft | Drafts encrypted with SQLCipher; key in OS keychain; drafts deleted after successful upload |
-| Screenshots (content) | Over-capture of PHI/PII | Client-side auto-redaction; sensitive workspaces enforce it; app/site exclusion list; destructive redaction; no keystroke text by default |
-| Public links | Leakage, guessing | 256-bit random tokens (stored hashed); optional password; expiry; revocation; admin can disable; `noindex`; rate limits; disabled in sensitive workspaces |
+| Screenshots (content) | Accidental over-capture | Optional client-side auto-redaction; manual redaction; app/site exclusion list; password fields never captured; typed text off by default (user can enable) |
+| Public links | Leakage, guessing | 256-bit random tokens (stored hashed); optional password; expiry; revocation; `noindex`; rate limits; every public view audited |
 | Guide data | Unauthorised access (IDOR) | Central authorisation layer (policy checks in one module, tested per endpoint); UUIDv7 IDs (not enumerable); deny by default |
 | Uploads | Malicious files | Magic-byte validation; allowlist (PNG, JPEG, WebP, MP4/WebM); decode and **re-encode** images; size limits; EXIF stripping; never serve uploads as HTML; `Content-Disposition` and `X-Content-Type-Options: nosniff` |
 | Web UI | XSS, clickjacking | Strict CSP (no inline, no eval); Markdown sanitised server-side (`ammonia`); `frame-ancestors` limited to configured embed origins |
 | Exports | Data exfiltration | Permission + policy checks, audit events, optional watermark ("Exported by X on DATE"), short-lived download links |
 | Audit log | Tampering, repudiation | Append-only table (DB role without UPDATE/DELETE), SHA-256 hash chain, periodic signed checkpoints, export + verify tool |
 | Server | RCE, supply chain | Rust (memory safe); `cargo-deny` + `cargo-audit` in CI; pinned dependencies; distroless non-root container, read-only root FS, dropped capabilities; SBOM (CycloneDX) per release |
-| Desktop app | Malicious update | Tauri updater with ed25519-signed bundles; Authenticode (Windows) and Developer ID + notarisation (macOS) signing |
+| Desktop app | Malicious or tampered installer/update | Tauri updater with ed25519-signed bundles (free, project-held key); SHA-256 checksums + Sigstore signatures on every release file; downloads served from the company's own OpnRelay server; optional signing with the company's internal CA. No paid OS vendor certificates ([ADR 0007](adr/0007-no-paid-code-signing.md)). |
 | Extension | Over-broad permissions | Minimal permissions (`activeTab`, `scripting`, `storage`); host permission only for the configured server; recording only on explicit user start |
 | Admin | Insider abuse | All admin actions audited; Owner/Admin changes require re-authentication (and MFA); optional two-person rule for audit log purge (log purge is otherwise impossible via UI) |
 
@@ -72,7 +74,7 @@ Rotation is a CLI command (`opnrelay-server keys rotate`).
 ## 6. Privacy and data handling
 
 - **No telemetry.** No crash reporting unless an admin configures a self-hosted Sentry-compatible endpoint.
-- **Data minimisation:** keystrokes are not stored; only "typed into field" events. Typed text capture is an admin opt-in and never applies to password or sensitive fields.
+- **Data minimisation:** keystrokes are not stored by default; only "typed into field" events. Users can turn on typed-text capture per recording. Password fields are always excluded.
 - **Retention:** per-workspace rules (drafts, published guides, exports, audit logs). Exports auto-expire (default 24 h).
 - **Legal hold** blocks deletion and retention purges for selected workspaces or guides.
 - **User data export/erasure** for GDPR-style requests. Audit events keep a pseudonymous actor ID after erasure so the chain stays intact.
@@ -89,9 +91,8 @@ Rotation is a CLI command (`opnrelay-server keys rotate`).
 | Authentication §164.312(d) | MFA, SSO |
 | Transmission security §164.312(e) | TLS everywhere |
 
-**Recommendation:** treat EMS as a *sensitive workspace* (enforced redaction, no public
-links, short retention for drafts). Best practice is to avoid capturing real patient
-records at all and record against training/test data where possible.
+OpnRelay does not restrict what EMS staff capture. The controls above (access control,
+encryption, audit of every view and export) apply to every guide regardless.
 
 ### Audit use
 - Auditor role with read-only scope.

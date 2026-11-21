@@ -12,10 +12,10 @@ labels). Both produce the same step model from `opnrelay-core`.
 | Screenshot mode | Full screen · Active window · Region around click (size: S/M/L or custom px) | Region (M) |
 | Multi-monitor | Monitor under cursor · All monitors (full-screen mode) | Monitor under cursor |
 | Highlight | Draw click highlight on screenshot (stored as vector annotation, editable) | On |
-| Auto-redaction | On / off (locked on in sensitive workspaces) | On |
-| Typed text | Off · Non-sensitive fields only (if admin allows) | Off |
+| Auto-redaction | On / off | User preference |
+| Typed text | Off · On (never for password fields) | Off |
 
-Admins can restrict which options are available ([org policies](data-model.md#settings)).
+The user picks these options per recording. Nothing is locked per department.
 
 ### Step generation
 1. Input event detected (mouse down/up pair, double-click, right-click, key combo, focus+typing burst, URL change, app switch).
@@ -63,7 +63,7 @@ XWayland. This must be documented clearly to Linux users.
 - HiDPI: frames are captured at native resolution and coordinates stored in physical pixels + scale factor.
 - **Local draft store:** SQLCipher database in the app data dir; the key is in the OS keychain (`keyring` crate: Windows Credential Manager, macOS Keychain, Secret Service on Linux).
 - **Offline:** drafts persist; the upload queue retries with backoff; uploads are resumable.
-- **Distribution:** MSI/NSIS (Windows, Authenticode signed), DMG (Developer ID + notarised, universal binary), AppImage + .deb + .rpm (Linux; Flatpak later). Enterprise deployment: MSI supports silent install with a preconfigured server URL (`OPNRELAY_SERVER_URL` property / config file); macOS supports a `.mobileconfig`-delivered setting.
+- **Distribution:** MSI/NSIS (Windows), DMG (macOS, universal binary), AppImage + .deb + .rpm (Linux; Flatpak later). No paid code-signing certificates; see [ADR 0007](adr/0007-no-paid-code-signing.md) and [deployment.md §8](deployment.md#8-client-rollout). Enterprise deployment: MSI supports silent install with a preconfigured server URL (`OPNRELAY_SERVER_URL` property / config file); macOS supports a `.mobileconfig`-delivered setting.
 
 ### Permissions onboarding
 - macOS: guided prompts for **Accessibility** and **Screen Recording**, with deep links into System Settings.
@@ -91,5 +91,5 @@ XWayland. This must be documented clearly to Linux users.
 ## 4. Video & GIF
 
 - Desktop video: H.264 MP4 via the OS encoder; step markers (timestamps) are recorded alongside, so "Steps + video" lets viewers jump to each step.
-- Server worker (bundled `ffmpeg`, LGPL build): transcodes to web-friendly MP4/WebM, generates poster frames and **GIFs** (palette-optimised, max width/fps configurable). Redaction on video: auto-redaction regions are applied per frame on the client for steps. For continuous video, **sensitive workspaces disable video recording by default**, because reliable per-frame redaction of arbitrary video is not achievable in v1.
+- Server worker (bundled `ffmpeg`, LGPL build): transcodes to web-friendly MP4/WebM, generates poster frames and **GIFs** (palette-optimised, max width/fps configurable). Redaction on video: auto-redaction applies to step screenshots. Continuous video is **not** auto-redacted in v1, because reliable per-frame redaction of arbitrary video is not achievable yet. The recorder shows a one-line note when video is selected, and users can trim the video or apply manual blur boxes over time ranges in the editor.
 - Steps-to-GIF: animated GIF built from step screenshots with highlights (pure Rust `gif` crate), no ffmpeg needed.

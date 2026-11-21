@@ -75,7 +75,6 @@ erDiagram
 | column | type | notes |
 |---|---|---|
 | id, org_id, name, slug | | |
-| sensitive | bool | enforces redaction, blocks public links and text capture |
 | policy_overrides | jsonb | e.g. capture modes allowed, retention |
 | legal_hold | bool | |
 
@@ -138,7 +137,9 @@ erDiagram
 
 **branding** (1:1 with org): `logo_media_id, logo_dark_media_id, primary_color, accent_color, font_family, header_text, footer_text, cover_page bool, show_step_numbers bool, watermark_exports bool`
 
-**org_policies** (1:1): `mfa_requirement, sso_only, session_idle_minutes, session_absolute_hours, public_links_enabled, max_public_link_days, allowed_capture_modes text[], default_capture_mode, auto_redaction_enforced, redaction_patterns jsonb, keep_originals_allowed, text_capture_allowed, export_formats_allowed text[], retention jsonb`
+**org_policies** (1:1): `mfa_requirement, sso_only, session_idle_minutes, session_absolute_hours, public_links_enabled, max_public_link_days, default_capture_mode, auto_redaction_default, redaction_patterns jsonb, retention jsonb`. These are defaults and optional org-wide switches; all start permissive.
+
+**user_preferences**: `user_id, capture_mode, auto_redaction bool, include_typed_text bool, region_size`
 
 ### Operations
 

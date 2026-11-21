@@ -13,7 +13,7 @@ Configured by Admins under **Settings → Branding** and stored in `branding`
 | Header text / footer text | Plain text with tokens: `{company}`, `{guide_title}`, `{date}`, `{page}`, `{pages}`, `{classification}`, `{author}` |
 | Cover page | On/off: logo, title, description, author, date, version |
 | Step numbers | On/off |
-| Export watermark | On/off: "Exported by {user} · {datetime}" (recommended for HR/EMS) |
+| Export watermark | On/off: "Exported by {user} · {datetime}" |
 | Classification banner | Automatic from guide classification (e.g. "CONFIDENTIAL") |
 
 Branding applies to: the web viewer, public/embedded share pages, and **every** export format.

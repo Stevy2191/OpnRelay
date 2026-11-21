@@ -4,16 +4,20 @@
 
 Replace a commercial step-by-step guide tool for an organisation of roughly **30–40 users**
 with a self-hosted, open-source product that is at least as convenient for everyday
-documentation, while being safe for **HR**, **EMS (emergency medical services)** and
-**audit** use.
+documentation, and used by every department, including **HR**, **EMS (emergency
+medical services)** and **auditors**.
+
+**Principle:** authors are trusted to decide what they show. No department is restricted
+by default. OpnRelay provides redaction tools and access controls, but it does not force
+them on anyone.
 
 ## 2. Users and roles
 
 | Persona | Needs |
 |---|---|
 | **Author** (any staff) | Record a process quickly, tidy it up, share it |
-| **HR staff** | Document HR system procedures; guides may show employee PII, so redaction and restricted access are needed |
-| **EMS staff** | Document ePCR / dispatch / medical-records workflows; screenshots may contain PHI, so automatic redaction and strict access are needed |
+| **HR staff** | Document HR system procedures; same tools as everyone else; they choose when to redact and who can see a guide |
+| **EMS staff** | Document ePCR / dispatch / records workflows; same tools as everyone else; they choose when to redact and who can see a guide |
 | **Viewer** | Find and follow guides; export them for training |
 | **Auditor** (internal or external) | Read-only access to guides plus the full audit trail; export evidence |
 | **Administrator** | Manage users, SSO, roles, branding, policies, retention |
@@ -49,17 +53,17 @@ Groups (manually managed or synced from SSO) can be assigned workspace roles.
 - **FR-C4** Recording types: **steps** (screenshot per action), **video** (continuous), or **both** (video with step markers). GIF can be produced from video or from steps.
 - **FR-C5** Each step captures: action type (click, double-click, right-click, type, key shortcut, navigate, app switch), target label (button/field name where available), app/window title or URL, cursor position, timestamp.
 - **FR-C6** Auto-generated step title, e.g. `Click "Save"`, `Type in "Employee ID"`, `Navigate to hr.example.com/onboarding`.
-- **FR-C7** Typed text is **not** captured by default; only "typed into field X". Admins may allow text capture for non-sensitive fields. Text from password and other sensitive fields is never captured.
+- **FR-C7** Typed text: by default steps say "Type in field X" without the text. The user can turn on "include typed text" per recording. Password fields are never captured. This is a fixed safety baseline, not a restriction on content.
 - **FR-C8** Pause/resume and stop controls, a global hotkey, and an always-visible recording indicator.
 - **FR-C9** App/site exclusion list (e.g. password managers, banking); captures are suppressed while these are focused.
 - **FR-C10** Offline recording; drafts are stored encrypted locally and uploaded when the server is reachable.
 
 ### 3.2 Redaction
-- **FR-R1** **Automatic redaction** (on by default, admin can enforce): password fields, elements tagged sensitive, and pattern matches (email, phone, SSN, credit-card numbers, dates of birth, MRN-like IDs), plus admin-defined regexes and CSS selectors (extension).
+- **FR-R1** **Automatic redaction** (the user turns it on or off per recording; the default is set in the user's preferences): password fields, elements tagged sensitive, and pattern matches (email, phone, SSN, credit-card numbers, dates of birth, MRN-like IDs), plus admin-defined regexes and CSS selectors (extension).
 - **FR-R2** **Manual redaction** in the editor: blur, pixelate, solid box.
 - **FR-R3** Automatic redaction happens **on the client before upload**.
-- **FR-R4** Redaction is destructive by default: original pixels are discarded on save. Admin policy can allow "keep original, restricted to Editors+" for non-sensitive workspaces.
-- **FR-R5** Workspaces can be flagged **sensitive** (e.g. HR, EMS), which enforces automatic redaction and disables public links and text capture.
+- **FR-R4** Redaction is destructive once the guide is saved: original pixels are discarded. Undo is available while editing.
+- **FR-R5** No per-department restrictions. HR, EMS and every other workspace get the same capture, video, sharing and export options. Who can *see* a guide is controlled by normal workspace membership.
 
 ### 3.3 Guides and editor
 - **FR-G1** Guide = title, description, ordered steps, metadata (owner, workspace, folder, tags, classification, status).

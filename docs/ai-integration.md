@@ -3,7 +3,7 @@
 **Not in scope for v1.** This note records design constraints so the v1 architecture doesn't block AI later.
 
 ## Intended shape
-- **Off by default**, enabled per organisation by an Admin, and disable-able per workspace (always off in sensitive workspaces unless explicitly allowed).
+- **Off by default**, enabled per organisation by an Admin, and can be turned off per workspace.
 - A pluggable **provider** interface in `opnrelay-server`:
   - Local: Ollama / llama.cpp server / any OpenAI-compatible endpoint on the company network (keeps all data on-premises).
   - Remote: OpenAI-compatible APIs, Anthropic, Azure OpenAI, using an admin-supplied key stored encrypted.

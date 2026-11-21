@@ -123,16 +123,43 @@ Release notes flag any breaking changes.
 
 ## 8. Client rollout
 
-- **Desktop:** download installers from the server's `/downloads` page (served from the release) or push via Intune/SCCM/Jamf with `OPNRELAY_SERVER_URL` preconfigured.
-- **Extension:** force-install via Chrome/Edge enterprise policy or Firefox `policies.json`, with the server URL in managed storage.
+The desktop apps are **not signed with paid Apple/Microsoft certificates**
+([ADR 0007](adr/0007-no-paid-code-signing.md)). They are safe to install. The
+operating system just shows a one-time "unknown developer" warning. Every release file
+comes with a SHA-256 checksum and a free Sigstore signature so IT can verify it.
+
+### Windows
+- **Manual install:** SmartScreen shows "Windows protected your PC" → **More info → Run anyway** (first install only).
+- **No warning (recommended):** push the MSI with Intune, SCCM or Group Policy. Managed deployment doesn't show the SmartScreen prompt.
+- **Optional, free:** if the company runs an internal certificate authority (Active Directory Certificate Services), IT can sign the MSI with an internal code-signing certificate and trust it via Group Policy. Open-source projects can also apply to the free **SignPath Foundation** programme for a publicly trusted certificate.
+
+### macOS
+- Builds are signed with a free **self-signed** certificate held by the project. This keeps the app's identity stable between updates, so the Accessibility and Screen Recording permissions don't have to be re-granted after every update.
+- **First launch:** macOS blocks the app once. Go to **System Settings → Privacy & Security → Open Anyway** (macOS 15+), or IT runs `xattr -dr com.apple.quarantine /Applications/OpnRelay.app`.
+- **Managed Macs:** deploy the `.pkg` via the company MDM (e.g. Jamf, Intune), and pre-approve the permissions with a PPPC profile.
+- Not available without the paid Apple programme: notarisation and Homebrew cask distribution.
+
+### Linux
+- No signing fees. `.deb`/`.rpm` repositories are signed with a free project GPG key; AppImage has a detached signature.
+
+### Updates
+- The desktop app updates itself from **your own OpnRelay server** (`/downloads`), verified with the project's ed25519 update key (free, built into Tauri).
+
+### Browser extension
+- **Firefox:** signed by Mozilla for free (listed on AMO or unlisted for self-hosting).
+- **Edge Add-ons:** free.
+- **Chrome Web Store:** a one-time US$5 developer registration (not yearly). Alternatively, skip the store and force-install the self-hosted `.crx` via Chrome/Edge enterprise policy on managed machines.
+- The server URL is preconfigured through managed storage in all cases.
+
+### Server URL preconfiguration
+- MSI property / config file `OPNRELAY_SERVER_URL`; macOS configuration profile; Linux `/etc/opnrelay/config.toml`.
 
 ## 9. Hardening checklist
 
 - [ ] Server reachable only from LAN/VPN (unless public links are needed externally)
 - [ ] MFA required for all users (or SSO-only with IdP MFA)
 - [ ] Break-glass Owner account with hardware key MFA, credentials stored offline
-- [ ] Sensitive workspaces created for HR and EMS
-- [ ] Public links disabled or limited
+- [ ] Workspaces created per department (HR, EMS, …) with the right members
 - [ ] Nightly backups + master key escrow verified
 - [ ] Host OS patched; Docker images updated monthly (subscribe to release notifications)
 - [ ] Audit log export scheduled to off-box storage / SIEM

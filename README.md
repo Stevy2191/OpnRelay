@@ -35,7 +35,7 @@ patient/EMS data, or audit evidence. OpnRelay aims to give the same everyday wor
 - Capture modes: **full screen**, **active window**, or **region around the click**; screenshots or **video/GIF**
 - Auto-generated step titles ("Click **Submit**", "Type in **Employee ID**")
 - Editor: reorder, merge, delete steps; annotate, crop, blur, and add tips, alerts and headings
-- Redaction: **automatic** (password fields, emails, SSNs, card numbers and other patterns) **and manual** (blur/box tool), applied before upload
+- Redaction, the user's choice: **automatic** (password fields, emails, SSNs, card numbers and other patterns) **and/or manual** (blur/box tool); automatic redaction is applied before upload. No department is restricted.
 - Exports: **PDF, HTML, Markdown, Word (.docx), images (PNG zip)**, plus **MP4/GIF** for recordings
 - Company branding (logo, colours, font, header/footer) on every guide and export
 - Sharing: internal links, **public links** (with expiry and password), **embeds**; admins can disable public sharing
@@ -64,4 +64,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability, see [SECURITY
 
 ## License
 
-To be finalised; see [ADR 0006](docs/adr/0006-license.md).
+[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). If you run a modified
+version of OpnRelay as a network service, you must make your changes available to its
+users. See [ADR 0006](docs/adr/0006-license.md).
