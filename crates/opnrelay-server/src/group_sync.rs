@@ -150,6 +150,87 @@ pub async fn sync_group(
     })
 }
 
+/// Set one user's membership of every linked (non-missing) group from Microsoft.
+/// Called at sign-in, so a person's access is right from their first request.
+pub async fn sync_user(
+    st: &AppState,
+    p: &Provider,
+    user_id: Uuid,
+    oid: &str,
+) -> Result<(), GraphError> {
+    let Some((email, status)): Option<(String, String)> =
+        sqlx::query_as("SELECT email, status FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(user_id)
+            .fetch_optional(&st.db)
+            .await
+            .map_err(db_err)?
+    else {
+        return Ok(());
+    };
+    if status == "disabled" {
+        return Ok(());
+    }
+    let theirs: Vec<String> = graph::user_group_ids(st, &p.app, oid)
+        .await?
+        .into_iter()
+        .collect();
+
+    let mut tx = st.db.begin().await.map_err(db_err)?;
+    let linked: Vec<(Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT g.id, g.external_id FROM groups g
+         JOIN users u ON u.org_id = g.org_id
+         WHERE u.id = $1 AND g.source = 'idp' AND g.missing_since IS NULL",
+    )
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(db_err)?;
+    let have: HashSet<Uuid> =
+        sqlx::query_scalar::<_, Uuid>("SELECT group_id FROM group_members WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .collect();
+    let actor = AuditActor {
+        id: Some(user_id),
+        label: email,
+        ip: None,
+    };
+    for (gid, external) in linked {
+        let want = external.is_some_and(|e| theirs.contains(&e));
+        let (sql, action) = match (want, have.contains(&gid)) {
+            (true, false) => (
+                "INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)",
+                "group.member.added",
+            ),
+            (false, true) => (
+                "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
+                "group.member.removed",
+            ),
+            _ => continue,
+        };
+        sqlx::query(sql)
+            .bind(gid)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        audit::record(
+            &mut tx,
+            &actor,
+            Event::new(action)
+                .target("group", gid)
+                .meta(json!({"user_id": user_id, "source": "microsoft"})),
+        )
+        .await
+        .map_err(db_err)?;
+    }
+    tx.commit().await.map_err(db_err)?;
+    Ok(())
+}
+
 /// How a Graph failure is shown to an administrator.
 pub fn api_err(e: GraphError) -> ApiError {
     match e {

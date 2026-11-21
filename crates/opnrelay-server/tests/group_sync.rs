@@ -881,3 +881,91 @@ async fn cancelled_sync_does_not_wedge_the_lock() {
     assert_eq!(held, 0, "the advisory lock leaked");
     app.cleanup().await;
 }
+
+const NEW_OID: &str = "00000000-0000-0000-0000-0000000000d1";
+
+#[tokio::test]
+async fn first_sign_in_lands_in_workspace() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base.clone()), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(HR.into(), fg("HR Staff", "security", &[NEW_OID], &[]));
+    let gid = link(&owner, HR).await;
+    let ws: Value = owner
+        .post("/workspaces", json!({"name": "HR"}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let ws_id = ws["id"].as_str().unwrap();
+    let r = owner
+        .put(
+            &format!("/workspaces/{ws_id}/members"),
+            json!({"members": [{"principal_type": "group", "principal_id": gid, "role": "viewer"}]}),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+
+    next_user(&fake, NEW_OID, "new@acme.test");
+    let b = browser();
+    microsoft_flow(&b, &format!("{}/api/v1/auth/sso/microsoft/start", app.base)).await;
+    let list: Value = b
+        .get(format!("{}/api/v1/workspaces", app.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["name"], "HR");
+    assert_eq!(member_count(&app, &gid).await, 1);
+    assert_eq!(
+        actions(&owner, "group.member.added").await,
+        vec!["group.member.added"]
+    );
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn sign_in_survives_graph_outage() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base.clone()), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(HR.into(), fg("HR Staff", "security", &[NEW_OID], &[]));
+    let gid = link(&owner, HR).await;
+    next_user(&fake, NEW_OID, "new@acme.test");
+    let b = browser();
+    microsoft_flow(&b, &format!("{}/api/v1/auth/sso/microsoft/start", app.base)).await;
+    assert_eq!(member_count(&app, &gid).await, 1);
+
+    {
+        let mut f = fake.lock().unwrap();
+        f.groups.get_mut(HR).unwrap().members.clear();
+        f.graph_fail = true;
+    }
+    let b2 = browser();
+    let r = microsoft_flow(
+        &b2,
+        &format!("{}/api/v1/auth/sso/microsoft/start", app.base),
+    )
+    .await;
+    assert!(r.status().is_redirection());
+    assert_eq!(r.headers()["location"], "/#/");
+    let me = b2
+        .get(format!("{}/api/v1/me", app.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me.status(), 200);
+    assert_eq!(member_count(&app, &gid).await, 1);
+    app.cleanup().await;
+}

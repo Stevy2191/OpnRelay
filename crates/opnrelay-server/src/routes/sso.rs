@@ -278,6 +278,12 @@ async fn handle_callback(
     .map_err(ApiError::bad)?;
 
     let user_id = resolve_user(st, org, &provider, &identity, client).await?;
+    if provider.group_sync_enabled
+        && let Err(e) =
+            crate::group_sync::sync_user(st, &provider, user_id, &identity.subject).await
+    {
+        tracing::warn!(error = ?e, "group sync at sign-in failed");
+    }
     let (token, lifetime) =
         auth::create_session(st, user_id, false, client.ip, client.user_agent.as_deref()).await?;
     sqlx::query("UPDATE sessions SET auth_method = 'sso', mfa_at = now() WHERE token_hash = $1")
