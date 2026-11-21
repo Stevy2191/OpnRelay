@@ -632,10 +632,10 @@ async fn link_group(
 ) -> ApiResult<(StatusCode, Json<GroupRow>)> {
     require_admin(&a)?;
     let p = crate::routes::sso::sync_provider(&st, a.org_id).await?;
-    let external = req.external_id.trim().to_lowercase();
-    if !crate::microsoft::is_guid(&external) {
-        return Err(ApiError::bad("external_id must be a Microsoft group ID"));
-    }
+    let external = Uuid::parse_str(req.external_id.trim())
+        .map_err(|_| ApiError::bad("external_id must be a Microsoft group ID"))?
+        .hyphenated()
+        .to_string();
     let dir = graph::get_group(&st, &p.app, &external)
         .await
         .map_err(group_sync::api_err)?;
@@ -661,14 +661,6 @@ async fn link_group(
     .bind(&external)
     .execute(&mut *tx)
     .await?;
-    audit::record(
-        &mut tx,
-        &a.audit(),
-        Event::new("idp.group.linked")
-            .target("group", id)
-            .meta(json!({"name": name, "external_id": external})),
-    )
-    .await?;
     tx.commit().await?;
     if let Err(e) = group_sync::sync_group(&st, &p, id, &a.audit()).await {
         // Do not leave a half-linked group behind.
@@ -678,6 +670,17 @@ async fn link_group(
             .await?;
         return Err(group_sync::api_err(e));
     }
+    // Recorded only once the first sync worked, so a failed link leaves no trace.
+    let mut tx = st.db.begin().await?;
+    audit::record(
+        &mut tx,
+        &a.audit(),
+        Event::new("idp.group.linked")
+            .target("group", id)
+            .meta(json!({"name": name, "external_id": external})),
+    )
+    .await?;
+    tx.commit().await?;
     let row = sqlx::query_as(&format!("{GROUP_SELECT} WHERE g.id = $1 GROUP BY g.id"))
         .bind(id)
         .fetch_one(&st.db)

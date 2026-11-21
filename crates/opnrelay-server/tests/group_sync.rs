@@ -404,6 +404,14 @@ async fn search_and_link() {
             .status(),
         StatusCode::CONFLICT
     );
+    let loud = HR.replace('-', "").to_uppercase();
+    assert_eq!(
+        owner
+            .post("/admin/groups/link", json!({"external_id": loud}))
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
     assert_eq!(
         owner
             .post("/admin/groups/link", json!({"external_id": "not-a-guid"}))
@@ -489,5 +497,61 @@ async fn idp_members_read_only_and_unlink_audited() {
     assert!(list.as_array().unwrap().iter().all(|x| x["id"] != id));
     assert_eq!(actions(&owner, "idp.group.unlinked").await.len(), 1);
     assert!(actions(&owner, "group.deleted").await.is_empty());
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn failed_first_sync_leaves_no_group() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(HR.into(), fg("HR Staff", "security", &[], &[]));
+    // Let get_group pass, fail the member listing.
+    fake.lock().unwrap().users_fail = false;
+    fake.lock().unwrap().graph_fail = true;
+    let r = owner
+        .post("/admin/groups/link", json!({"external_id": HR}))
+        .await;
+    assert!(r.status().is_client_error() || r.status().is_server_error());
+    fake.lock().unwrap().graph_fail = false;
+    let list: Value = owner.get("/admin/groups").await.json().await.unwrap();
+    assert!(list.as_array().unwrap().is_empty());
+    assert!(actions(&owner, "idp.group.linked").await.is_empty());
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn credential_change_drops_cached_token() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(HR.into(), fg("HR Staff", "security", &[], &[]));
+    owner.get("/admin/sso/groups/search?q=hr").await;
+    owner.get("/admin/sso/groups/search?q=hr").await;
+    assert_eq!(fake.lock().unwrap().app_token_requests, 1);
+    // Same credentials: cache kept.
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    owner.get("/admin/sso/groups/search?q=hr").await;
+    assert_eq!(fake.lock().unwrap().app_token_requests, 1);
+    // Changed secret: cache dropped (the fake accepts any secret).
+    let r = owner
+        .put(
+            "/admin/sso",
+            json!({"enabled": true, "tenant_id": TENANT, "client_id": CLIENT, "client_secret": "other",
+                "jit_provisioning": true, "default_role": "member", "sso_only": false,
+                "group_sync_enabled": true}),
+        )
+        .await;
+    assert_eq!(r.status(), 204);
+    owner.get("/admin/sso/groups/search?q=hr").await;
+    assert_eq!(fake.lock().unwrap().app_token_requests, 2);
     app.cleanup().await;
 }

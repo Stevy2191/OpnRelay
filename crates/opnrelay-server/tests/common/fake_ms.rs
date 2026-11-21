@@ -80,8 +80,11 @@ async fn authorize(
 
 async fn token(State(s): State<S>, Form(f): Form<HashMap<String, String>>) -> impl IntoResponse {
     let mut st = s.lock().unwrap();
-    assert_eq!(f["client_id"], CLIENT);
-    assert_eq!(f["client_secret"], "s3cret");
+    // App-only tokens accept any credentials so tests can rotate them.
+    if f["grant_type"] != "client_credentials" {
+        assert_eq!(f["client_id"], CLIENT);
+        assert_eq!(f["client_secret"], "s3cret");
+    }
     match f["grant_type"].as_str() {
         "authorization_code" => {
             assert!(!f["code_verifier"].is_empty(), "PKCE verifier must be sent");
