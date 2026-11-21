@@ -8,6 +8,7 @@ pub mod backup;
 pub mod bootstrap;
 pub mod config;
 pub mod error;
+pub mod graph;
 pub mod mfa;
 pub mod microsoft;
 pub mod onedrive;

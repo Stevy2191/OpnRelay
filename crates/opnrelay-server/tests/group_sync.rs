@@ -155,3 +155,111 @@ async fn fake_directory_next_link_keeps_query() {
     assert_eq!(ids, HashSet::from(["g1", "g3", "g4"]));
     assert_eq!(pages, 2);
 }
+
+use common::TestApp;
+use opnrelay_server::graph::{self, GraphError};
+use opnrelay_server::microsoft::AppConfig;
+
+fn app_cfg() -> AppConfig {
+    AppConfig {
+        tenant_id: TENANT.into(),
+        client_id: common::fake_ms::CLIENT.into(),
+        client_secret: "s3cret".into(),
+    }
+}
+
+fn fg(name: &str, kind: &'static str, members: &[&str], nested: &[&str]) -> FakeGroup {
+    FakeGroup {
+        name: name.into(),
+        kind,
+        members: members.iter().map(|s| s.to_string()).collect(),
+        nested: nested.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+#[tokio::test]
+async fn graph_reads_directory() {
+    let (base, fake) = fake_microsoft().await;
+    let app = TestApp::spawn_with(Some(base), None).await;
+    let st = app.state();
+    let cfg = app_cfg();
+    {
+        let mut f = fake.lock().unwrap();
+        f.groups
+            .insert("H".into(), fg("HR Staff", "security", &["u1"], &[]));
+        f.groups.insert(
+            "G".into(),
+            fg("Medics", "security", &["u1", "u2", "u3"], &["N"]),
+        );
+        f.groups
+            .insert("N".into(), fg("Nested", "m365", &["u4"], &[]));
+        f.groups
+            .insert("D".into(), fg("Dead", "security", &[], &[]));
+        f.deleted_groups.insert("D".into());
+        f.users.insert("u1".into(), true);
+    }
+    let found = graph::search_groups(&st, &cfg, "hr").await.unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].display_name, "HR Staff");
+    assert_eq!(found[0].kind, "Security group");
+    assert!(!found[0].on_prem);
+    let m = graph::search_groups(&st, &cfg, "nest").await.unwrap();
+    assert_eq!(m[0].kind, "Microsoft 365 group");
+    assert_eq!(
+        graph::get_group(&st, &cfg, "G").await.unwrap().display_name,
+        "Medics"
+    );
+
+    let want: HashSet<String> = ["u1", "u2", "u3", "u4"].map(String::from).into();
+    assert_eq!(graph::group_user_ids(&st, &cfg, "G").await.unwrap(), want);
+    let groups = graph::user_group_ids(&st, &cfg, "u4").await.unwrap();
+    assert!(groups.contains("G") && groups.contains("N"));
+
+    let en = graph::accounts_enabled(&st, &cfg, &["u1".into(), "gone".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        en,
+        std::collections::HashMap::from([("u1".to_string(), true)])
+    );
+
+    assert!(matches!(
+        graph::get_group(&st, &cfg, "D").await,
+        Err(GraphError::NotFound)
+    ));
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn graph_caches_token_and_retries() {
+    let (base, fake) = fake_microsoft().await;
+    let app = TestApp::spawn_with(Some(base), None).await;
+    let st = app.state();
+    let cfg = app_cfg();
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert("H".into(), fg("HR Staff", "security", &[], &[]));
+    graph::search_groups(&st, &cfg, "hr").await.unwrap();
+    graph::search_groups(&st, &cfg, "hr").await.unwrap();
+    assert_eq!(fake.lock().unwrap().app_token_requests, 1);
+
+    fake.lock().unwrap().throttle_once = true;
+    graph::search_groups(&st, &cfg, "hr").await.unwrap();
+
+    fake.lock().unwrap().graph_fail = true;
+    assert!(matches!(
+        graph::search_groups(&st, &cfg, "hr").await,
+        Err(GraphError::Failed(_))
+    ));
+    app.cleanup().await;
+}
+
+#[test]
+fn tenant_check() {
+    for t in ["organizations", "common", "consumers"] {
+        assert!(!graph::tenant_is_specific(t), "{t}");
+    }
+    assert!(graph::tenant_is_specific(TENANT));
+    assert!(graph::tenant_is_specific("contoso.onmicrosoft.com"));
+}

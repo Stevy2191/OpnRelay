@@ -25,6 +25,7 @@ pub struct TestApp {
     admin_url: String,
     pub storage: std::path::PathBuf,
     pub master_key: SecretKey,
+    pub db_cfg: Config,
 }
 
 pub fn admin_url() -> String {
@@ -76,7 +77,7 @@ impl TestApp {
             ms_login_url: ms.clone(),
             ms_graph_url: format!("{ms}/v1.0"),
         };
-        let state = AppState::new(db.clone(), cfg);
+        let state = AppState::new(db.clone(), cfg.clone());
         state.storage.ensure_root().await.unwrap();
         let app = opnrelay_server::app(state);
         tokio::spawn(async move {
@@ -94,7 +95,13 @@ impl TestApp {
             admin_url: admin,
             storage,
             master_key,
+            db_cfg: cfg,
         }
+    }
+
+    /// An `AppState` with the same config the spawned server uses.
+    pub fn state(&self) -> AppState {
+        AppState::new(self.db.clone(), self.db_cfg.clone())
     }
 
     pub async fn cleanup(self) {

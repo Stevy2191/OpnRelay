@@ -301,6 +301,21 @@ async fn groups_search(
     page(&f, "/v1.0/groups", &q, items).into_response()
 }
 
+async fn group_get(
+    State(s): State<S>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let mut f = s.lock().unwrap();
+    if let Some(r) = dir_guard(&mut f, &headers) {
+        return r;
+    }
+    match f.groups.get(&id) {
+        Some(g) if !f.deleted_groups.contains(&id) => Json(group_json(&id, g)).into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 async fn group_members(
     State(s): State<S>,
     Path(id): Path<String>,
@@ -380,6 +395,7 @@ pub async fn fake_microsoft() -> (String, S) {
         .route("/{tenant}/oauth2/v2.0/token", post(token))
         .route("/v1.0/me", get(me))
         .route("/v1.0/groups", get(groups_search))
+        .route("/v1.0/groups/{id}", get(group_get))
         .route(
             "/v1.0/groups/{id}/transitiveMembers/microsoft.graph.user",
             get(group_members),

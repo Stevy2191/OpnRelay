@@ -16,6 +16,8 @@ pub struct AppState {
     pub limiter: Arc<RateLimiter>,
     /// Key for encrypting secrets stored in the database (TOTP seeds...).
     pub secrets_key: Arc<SecretKey>,
+    /// Cached app-only Graph token and when to stop using it.
+    pub graph_token: Arc<tokio::sync::Mutex<Option<(String, std::time::Instant)>>>,
 }
 
 impl AppState {
@@ -27,6 +29,7 @@ impl AppState {
             storage,
             limiter: Arc::new(RateLimiter::default()),
             secrets_key,
+            graph_token: Arc::default(),
             cfg: Arc::new(cfg),
         }
     }
