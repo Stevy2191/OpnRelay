@@ -34,8 +34,10 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 - **Demo:** branded PDF/Word of a recorded guide. *(This milestone is the internal pilot point.)*
 
 ## M4: Browser extension
-- [ ] Chrome/Edge + Firefox builds, DOM labels, DOM-level redaction
-- [ ] Enterprise force-install + managed config
+- [x] Chrome/Edge + Firefox builds (Manifest V3), accessible-name labels, DOM-level redaction (password/card fields always; emails, phone numbers, SSNs, card numbers and admin patterns when on)
+- [x] OAuth + PKCE sign-in, upload as a draft guide, pause/resume/discard
+- [x] Enterprise managed config (server URL)
+- [ ] Store listings (Chrome Web Store, Edge Add-ons, Firefox AMO) and signed self-host packages
 - [ ] Linux desktop (X11; Wayland portal mode)
 
 ## M5: Editor & sharing

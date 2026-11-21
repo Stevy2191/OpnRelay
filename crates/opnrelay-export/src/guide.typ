@@ -9,7 +9,7 @@
 #let border = rgb("#dde1e7")
 
 #set document(title: data.title, author: data.author)
-#set text(font: ("Inter", "Libertinus Serif"), size: 10.5pt, fill: rgb("#1b1f24"), lang: "en")
+#set text(font: "Inter", fallback: false, size: 10.5pt, fill: rgb("#1b1f24"), lang: "en")
 #set par(justify: false, leading: 0.65em)
 
 #let with-pages(s) = context {
@@ -54,7 +54,7 @@
 )
 
 #let run(r) = {
-  let c = if r.c { box(fill: rgb("#f0f2f5"), inset: (x: 2pt), outset: (y: 2pt), radius: 2pt, text(font: "DejaVu Sans Mono", size: 0.9em, r.t)) } else { text(r.t) }
+  let c = if r.c { box(fill: rgb("#f0f2f5"), inset: (x: 2pt), outset: (y: 2pt), radius: 2pt, text(size: 0.92em, fill: rgb("#8a2b3a"), r.t)) } else { text(r.t) }
   if r.b { c = strong(c) }
   if r.i { c = emph(c) }
   c

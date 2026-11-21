@@ -2503,7 +2503,6 @@ dependencies = [
  "serde_json",
  "thiserror",
  "typst",
- "typst-assets",
  "typst-layout",
  "typst-pdf",
  "uuid",

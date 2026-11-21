@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "serverUrl": {
+      "title": "OpnRelay server URL",
+      "description": "Pre-configures the server, e.g. https://guides.company.com",
+      "type": "string"
+    }
+  }
+}

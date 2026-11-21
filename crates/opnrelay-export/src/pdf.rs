@@ -41,7 +41,6 @@ fn shared() -> &'static Shared {
         let fonts: Vec<Font> = INTER
             .iter()
             .copied()
-            .chain(typst_assets::fonts())
             .flat_map(|data| Font::iter(Bytes::new(data)))
             .collect();
         Shared {

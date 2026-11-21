@@ -37,6 +37,7 @@ struct OrgInfo {
     public_links_enabled: bool,
     default_capture_mode: String,
     auto_redaction_default: bool,
+    redaction_patterns: Value,
 }
 
 async fn me(
@@ -44,7 +45,8 @@ async fn me(
     CurrentUserLax(a): CurrentUserLax,
 ) -> ApiResult<Json<Value>> {
     let org: OrgInfo = sqlx::query_as(
-        "SELECT o.name, p.mfa_requirement, p.public_links_enabled, p.default_capture_mode, p.auto_redaction_default
+        "SELECT o.name, p.mfa_requirement, p.public_links_enabled, p.default_capture_mode, p.auto_redaction_default,
+                p.redaction_patterns
          FROM organizations o JOIN org_policies p ON p.org_id = o.id WHERE o.id = $1",
     )
     .bind(a.org_id)
@@ -72,6 +74,7 @@ async fn me(
             "public_links_enabled": org.public_links_enabled,
             "default_capture_mode": org.default_capture_mode,
             "auto_redaction_default": org.auto_redaction_default,
+            "redaction_patterns": org.redaction_patterns,
         }
     })))
 }

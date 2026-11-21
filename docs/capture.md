@@ -65,26 +65,32 @@ XWayland. This must be documented clearly to Linux users.
 - **Offline:** drafts persist; the upload queue retries with backoff; uploads are resumable.
 - **Distribution:** MSI/NSIS (Windows), DMG (macOS, universal binary), AppImage + .deb + .rpm (Linux; Flatpak later). No paid code-signing certificates; see [ADR 0007](adr/0007-no-paid-code-signing.md) and [deployment.md §8](deployment.md#8-client-rollout). Enterprise deployment: MSI supports silent install with a preconfigured server URL (`OPNRELAY_SERVER_URL` property / config file); macOS supports a `.mobileconfig`-delivered setting.
 
-### Permissions onboarding
-- macOS: guided prompts for **Accessibility** and **Screen Recording**, with deep links into System Settings.
-- Windows: none required (no admin rights for install in per-user mode).
-- Linux: portal consent dialogs; documentation for distros.
-
-## 3. Browser extension
-
-### Targets
-- Chrome, Edge (Chromium MV3) and Firefox (MV3, Gecko-specific manifest keys). One TypeScript codebase built with Vite into `dist/chromium` and `dist/firefox`.
-- Distributed through the Chrome Web Store / Edge Add-ons / Firefox AMO **and** as self-hostable packages for enterprise force-install via policy (`ExtensionInstallForcelist`, Firefox `policies.json`), preconfigured with the server URL through managed storage (`storage.managed`).
-
 ### Permissions
-- `activeTab`, `scripting`, `storage`, `identity` (for sign-in), and host permission for the configured OpnRelay server only.
-- Content scripts are injected **only into the tab where recording was started** (plus same-tab navigations while recording). There are no persistent `<all_urls>` content scripts.
+- Required: `activeTab`, `scripting`, `storage`, `identity`.
+- Optional, requested with a clear prompt: access to the OpnRelay server (when it is
+  configured) and to web pages (when the first recording starts). Page access is what lets
+  a recording continue across pages and sites.
+- Content scripts are injected **only into the tab being recorded**, only while recording.
+  There are no permanent content scripts.
+
+### Sign-in
+`identity.launchWebAuthFlow` opens the server's `#/connect` consent page (OAuth 2.0
+authorisation code + PKCE; see [api.md](api.md#1-authentication)). The refresh token is
+kept in extension storage; the short-lived access token only in session storage.
+
+### Enterprise install
+- **Chrome / Edge:** force-install with the `ExtensionInstallForcelist` policy and set the
+  server with managed storage (`3rdparty.extensions.<id>.serverUrl`, schema in
+  `apps/extension/static/managed-schema.json`).
+- **Firefox:** `policies.json` → `ExtensionSettings` (force install) and `3rdparty` →
+  `Extensions` → `recorder@opnrelay.dev` → `serverUrl`.
 
 ### Recording
-- Content script listens to `pointerdown`, `click`, `change`, `input` (debounced), `submit`, `keydown` (shortcuts only), and SPA navigations (History API patches + `popstate`).
+- Content script listens (capture phase, trusted events only) to `pointerdown` (click / right-click), `change` (typing into a field, choosing from a list) and `keydown` for shortcuts (Ctrl/⌘/Alt + key). After each navigation in the recorded tab the script is injected again.
+- Screenshots are throttled to the browser limit (~2 per second) and queued, so very fast sequences of actions can show the page a moment after the action.
 - Label resolution order: `aria-label` → `aria-labelledby` → `<label for>` → button/link text → `title` → `placeholder` → `name` → role + nearest heading.
 - Before the screenshot: the content script draws redaction overlays on sensitive elements (DOM-level masking), then asks the service worker to `captureVisibleTab`, then removes the overlays. Unredacted pixels are never captured.
-- Region/element mode crops around the target element's bounding rect (`devicePixelRatio` aware).
+- "Area around each click" crops a 1000×640 CSS-pixel region around the click; "whole page view" keeps the visible tab. Coordinates are scaled to the real screenshot size.
 - Video in the extension uses `chrome.tabCapture` / `getDisplayMedia` with MediaRecorder (WebM). Firefox uses `getDisplayMedia` with a user prompt.
 - Cross-origin iframes: labels are unavailable without `all_frames` injection. Phase 1 captures the click and screenshot with a generic label; phase 2 adds opt-in frame injection.
 

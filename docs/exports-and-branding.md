@@ -54,8 +54,9 @@ Guide + steps (DB) ──► opnrelay_export::RenderModel  (format-neutral, alre
   strings, HTML output is escaped, Markdown links/raw HTML are reduced to text. Typst runs
   in a sandboxed "world" that can only read the guide's data and images (no file system,
   no packages, no network).
-- Fonts are bundled ([Inter](../crates/opnrelay-export/fonts/OFL.txt), SIL OFL 1.1, plus
-  Typst's own bundled fonts), so output looks the same on every server.
+- The [Inter](../crates/opnrelay-export/fonts/OFL.txt) font (SIL OFL 1.1) is bundled, so
+  output looks the same on every server. Inter covers Latin, Greek and Cyrillic; add a
+  font (e.g. Noto Sans CJK) to `crates/opnrelay-export/fonts/` for other scripts.
 - Annotations are stored as vectors and burned in at export time, so editing a highlight
   never degrades the original screenshot.
 - v1 renders **synchronously** (`GET /api/v1/guides/{id}/export?format=…`) in a blocking

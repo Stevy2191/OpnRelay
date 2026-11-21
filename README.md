@@ -10,8 +10,8 @@ third-party cloud, no data leaving your network.
 > Status: **early development**. Milestones M0, M1 and M3 are done: the server, web app,
 > accounts with two-factor authentication, workspaces, guides, the audit log, company
 > branding and PDF/Word/HTML/Markdown/image exports work and run in Docker. Guides can be
-> built today from uploaded or pasted screenshots. The desktop recorder and browser
-> extension are next; see the [roadmap](docs/roadmap.md).
+> built from the **browser extension** (Chrome, Edge, Firefox) or from uploaded/pasted
+> screenshots. The desktop recorder is next; see the [roadmap](docs/roadmap.md).
 
 ## Why
 
