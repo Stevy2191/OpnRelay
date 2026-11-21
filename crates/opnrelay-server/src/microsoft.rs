@@ -34,6 +34,7 @@ pub struct Provider {
     pub enabled: bool,
     pub jit_provisioning: bool,
     pub default_role: String,
+    pub group_sync_enabled: bool,
     pub app: AppConfig,
 }
 
@@ -43,6 +44,7 @@ struct ProviderRow {
     enabled: bool,
     jit_provisioning: bool,
     default_role: String,
+    group_sync_enabled: bool,
     config_enc: Vec<u8>,
 }
 
@@ -57,7 +59,7 @@ pub fn seal_config(st: &AppState, id: Uuid, app: &AppConfig) -> ApiResult<Vec<u8
 /// The organisation's Microsoft app configuration, if any.
 pub async fn load(st: &AppState, db: &PgPool, org: Uuid) -> ApiResult<Option<Provider>> {
     let row: Option<ProviderRow> = sqlx::query_as(
-        "SELECT id, enabled, jit_provisioning, default_role, config_enc FROM identity_providers
+        "SELECT id, enabled, jit_provisioning, default_role, group_sync_enabled, config_enc FROM identity_providers
          WHERE org_id = $1 AND name = $2",
     )
     .bind(org)
@@ -72,6 +74,7 @@ pub async fn load(st: &AppState, db: &PgPool, org: Uuid) -> ApiResult<Option<Pro
         enabled: r.enabled,
         jit_provisioning: r.jit_provisioning,
         default_role: r.default_role,
+        group_sync_enabled: r.group_sync_enabled,
         app: serde_json::from_slice(&json).map_err(anyhow::Error::from)?,
     }))
 }

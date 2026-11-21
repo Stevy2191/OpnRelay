@@ -14,6 +14,8 @@ use crate::audit::{self, Event};
 use crate::auth::{Actor, CurrentUser};
 use crate::authz::{OrgRole, require_admin};
 use crate::error::{ApiError, ApiResult};
+use crate::graph;
+use crate::group_sync;
 use crate::state::AppState;
 use crate::util;
 
@@ -26,6 +28,7 @@ pub fn router() -> Router<AppState> {
         .route("/users/{id}/revoke-sessions", post(revoke_sessions))
         .route("/policies", get(get_policies).put(put_policies))
         .route("/groups", get(list_groups).post(create_group))
+        .route("/groups/link", post(link_group))
         .route("/groups/{id}", delete(delete_group))
         .route("/groups/{id}/members", put(set_group_members))
 }
@@ -454,19 +457,26 @@ struct GroupRow {
     id: Uuid,
     name: String,
     source: String,
+    external_id: Option<String>,
+    grants_role: Option<String>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    missing_since: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    last_synced_at: Option<OffsetDateTime>,
     member_ids: Vec<Uuid>,
 }
+
+const GROUP_SELECT: &str = "SELECT g.id, g.name, g.source, g.external_id, g.grants_role, g.missing_since, g.last_synced_at,
+                COALESCE(array_agg(gm.user_id) FILTER (WHERE gm.user_id IS NOT NULL), '{}') AS member_ids
+         FROM groups g LEFT JOIN group_members gm ON gm.group_id = g.id";
 
 async fn list_groups(
     State(st): State<AppState>,
     CurrentUser(a): CurrentUser,
 ) -> ApiResult<Json<Vec<GroupRow>>> {
-    let rows = sqlx::query_as(
-        "SELECT g.id, g.name, g.source,
-                COALESCE(array_agg(gm.user_id) FILTER (WHERE gm.user_id IS NOT NULL), '{}') AS member_ids
-         FROM groups g LEFT JOIN group_members gm ON gm.group_id = g.id
-         WHERE g.org_id = $1 GROUP BY g.id ORDER BY g.name",
-    )
+    let rows = sqlx::query_as(&format!(
+        "{GROUP_SELECT} WHERE g.org_id = $1 GROUP BY g.id ORDER BY g.name"
+    ))
     .bind(a.org_id)
     .fetch_all(&st.db)
     .await?;
@@ -515,14 +525,16 @@ async fn delete_group(
 ) -> ApiResult<StatusCode> {
     require_admin(&a)?;
     let mut tx = st.db.begin().await?;
-    let r = sqlx::query("DELETE FROM groups WHERE id = $1 AND org_id = $2")
-        .bind(id)
-        .bind(a.org_id)
-        .execute(&mut *tx)
-        .await?;
-    if r.rows_affected() == 0 {
+    let gone: Option<(String, String, Option<String>)> = sqlx::query_as(
+        "DELETE FROM groups WHERE id = $1 AND org_id = $2 RETURNING source, name, external_id",
+    )
+    .bind(id)
+    .bind(a.org_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((source, name, external_id)) = gone else {
         return Err(ApiError::NotFound);
-    }
+    };
     sqlx::query(
         "DELETE FROM workspace_members WHERE principal_type = 'group' AND principal_id = $1",
     )
@@ -532,7 +544,13 @@ async fn delete_group(
     audit::record(
         &mut tx,
         &a.audit(),
-        Event::new("group.deleted").target("group", id),
+        if source == "idp" {
+            Event::new("idp.group.unlinked")
+                .target("group", id)
+                .meta(json!({"name": name, "external_id": external_id}))
+        } else {
+            Event::new("group.deleted").target("group", id)
+        },
     )
     .await?;
     tx.commit().await?;
@@ -552,14 +570,20 @@ async fn set_group_members(
 ) -> ApiResult<StatusCode> {
     require_admin(&a)?;
     let mut tx = st.db.begin().await?;
-    let exists: Option<bool> =
-        sqlx::query_scalar("SELECT true FROM groups WHERE id = $1 AND org_id = $2")
+    let source: Option<String> =
+        sqlx::query_scalar("SELECT source FROM groups WHERE id = $1 AND org_id = $2")
             .bind(id)
             .bind(a.org_id)
             .fetch_optional(&mut *tx)
             .await?;
-    if exists.is_none() {
-        return Err(ApiError::NotFound);
+    match source.as_deref() {
+        None => return Err(ApiError::NotFound),
+        Some("idp") => {
+            return Err(ApiError::bad(
+                "Members of Microsoft groups come from Microsoft",
+            ));
+        }
+        Some(_) => {}
     }
     let valid: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM users WHERE id = ANY($1) AND org_id = $2 AND deleted_at IS NULL",
@@ -593,4 +617,70 @@ async fn set_group_members(
     .await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct LinkGroup {
+    external_id: String,
+}
+
+/// Start syncing a Microsoft group as an OpnRelay group.
+async fn link_group(
+    State(st): State<AppState>,
+    CurrentUser(a): CurrentUser,
+    Json(req): Json<LinkGroup>,
+) -> ApiResult<(StatusCode, Json<GroupRow>)> {
+    require_admin(&a)?;
+    let p = crate::routes::sso::sync_provider(&st, a.org_id).await?;
+    let external = req.external_id.trim().to_lowercase();
+    if !crate::microsoft::is_guid(&external) {
+        return Err(ApiError::bad("external_id must be a Microsoft group ID"));
+    }
+    let dir = graph::get_group(&st, &p.app, &external)
+        .await
+        .map_err(group_sync::api_err)?;
+    let id = Uuid::now_v7();
+    let mut tx = st.db.begin().await?;
+    let linked: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM groups WHERE org_id = $1 AND source = 'idp' AND external_id = $2)",
+    )
+    .bind(a.org_id)
+    .bind(&external)
+    .fetch_one(&mut *tx)
+    .await?;
+    if linked {
+        return Err(ApiError::Conflict("That group is already linked".into()));
+    }
+    let name = group_sync::free_name(&mut tx, a.org_id, &dir.display_name, None).await?;
+    sqlx::query(
+        "INSERT INTO groups (id, org_id, name, source, external_id) VALUES ($1,$2,$3,'idp',$4)",
+    )
+    .bind(id)
+    .bind(a.org_id)
+    .bind(&name)
+    .bind(&external)
+    .execute(&mut *tx)
+    .await?;
+    audit::record(
+        &mut tx,
+        &a.audit(),
+        Event::new("idp.group.linked")
+            .target("group", id)
+            .meta(json!({"name": name, "external_id": external})),
+    )
+    .await?;
+    tx.commit().await?;
+    if let Err(e) = group_sync::sync_group(&st, &p, id, &a.audit()).await {
+        // Do not leave a half-linked group behind.
+        sqlx::query("DELETE FROM groups WHERE id = $1")
+            .bind(id)
+            .execute(&st.db)
+            .await?;
+        return Err(group_sync::api_err(e));
+    }
+    let row = sqlx::query_as(&format!("{GROUP_SELECT} WHERE g.id = $1 GROUP BY g.id"))
+        .bind(id)
+        .fetch_one(&st.db)
+        .await?;
+    Ok((StatusCode::CREATED, Json(row)))
 }

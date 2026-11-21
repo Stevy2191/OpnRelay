@@ -16,6 +16,8 @@ use crate::audit::{self, AuditActor, Event};
 use crate::auth::{self, ClientInfo, CurrentUser, CurrentUserLax};
 use crate::authz::{OrgRole, require_admin};
 use crate::error::{ApiError, ApiResult};
+use crate::graph;
+use crate::group_sync;
 use crate::microsoft::{self, AppConfig};
 use crate::state::AppState;
 
@@ -27,6 +29,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/sso/microsoft/start", get(start_login))
         .route("/auth/sso/microsoft/callback", get(callback))
         .route("/admin/sso", get(get_settings).put(put_settings))
+        .route("/admin/sso/groups/search", get(search_groups))
 }
 
 async fn org_id(st: &AppState) -> ApiResult<Uuid> {
@@ -422,7 +425,21 @@ struct Settings {
     default_role: String,
     sso_only: bool,
     redirect_uri: String,
+    group_sync_enabled: bool,
+    #[serde(with = "time::serde::rfc3339::option")]
+    group_sync_last_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    group_sync_last_ok_at: Option<OffsetDateTime>,
+    group_sync_last_error: Option<String>,
+    group_sync_brake_pending: Option<i32>,
 }
+
+type SyncStatus = (
+    Option<OffsetDateTime>,
+    Option<OffsetDateTime>,
+    Option<String>,
+    Option<i32>,
+);
 
 async fn get_settings(
     State(st): State<AppState>,
@@ -430,6 +447,19 @@ async fn get_settings(
 ) -> ApiResult<Json<Settings>> {
     require_admin(&a)?;
     let p = microsoft::load(&st, &st.db, a.org_id).await?;
+    let status: Option<SyncStatus> = match &p {
+        Some(p) => {
+            sqlx::query_as(
+                "SELECT group_sync_last_at, group_sync_last_ok_at, group_sync_last_error,
+                        group_sync_brake_pending FROM identity_providers WHERE id = $1",
+            )
+            .bind(p.id)
+            .fetch_optional(&st.db)
+            .await?
+        }
+        None => None,
+    };
+    let (last_at, last_ok_at, last_error, brake) = status.unwrap_or_default();
     Ok(Json(Settings {
         configured: p.is_some(),
         enabled: p.as_ref().is_some_and(|p| p.enabled),
@@ -449,6 +479,11 @@ async fn get_settings(
             .unwrap_or_else(|| "member".into()),
         sso_only: sso_only(&st, a.org_id).await?,
         redirect_uri: microsoft::redirect_uri(&st),
+        group_sync_enabled: p.as_ref().is_some_and(|p| p.group_sync_enabled),
+        group_sync_last_at: last_at,
+        group_sync_last_ok_at: last_ok_at,
+        group_sync_last_error: last_error,
+        group_sync_brake_pending: brake,
     }))
 }
 
@@ -463,6 +498,8 @@ struct PutSettings {
     jit_provisioning: bool,
     default_role: String,
     sso_only: bool,
+    #[serde(default)]
+    group_sync_enabled: bool,
 }
 
 async fn put_settings(
@@ -471,6 +508,11 @@ async fn put_settings(
     Json(req): Json<PutSettings>,
 ) -> ApiResult<StatusCode> {
     require_admin(&a)?;
+    if req.group_sync_enabled && !graph::tenant_is_specific(&req.tenant_id) {
+        return Err(ApiError::bad(
+            "Group sync needs your specific tenant ID (not organizations, common or consumers).",
+        ));
+    }
     if !microsoft::valid_tenant(&req.tenant_id) {
         return Err(ApiError::bad(
             "enter your Directory (tenant) ID or primary domain, not 'common'",
@@ -503,19 +545,29 @@ async fn put_settings(
     if req.enabled && secret.is_empty() {
         return Err(ApiError::bad("a client secret is required"));
     }
+    if req.group_sync_enabled && secret.is_empty() {
+        return Err(ApiError::bad("Group sync needs a client secret"));
+    }
     let id = existing.as_ref().map(|p| p.id).unwrap_or_else(Uuid::now_v7);
     let app = AppConfig {
         tenant_id: req.tenant_id.trim().to_string(),
         client_id: req.client_id.trim().to_lowercase(),
         client_secret: secret,
     };
+    let app_changed = existing.as_ref().is_none_or(|p| {
+        p.app.tenant_id != app.tenant_id
+            || p.app.client_id != app.client_id
+            || p.app.client_secret != app.client_secret
+    });
+    let sync_was = existing.as_ref().is_some_and(|p| p.group_sync_enabled);
     let enc = microsoft::seal_config(&st, id, &app)?;
     let mut tx = st.db.begin().await?;
     sqlx::query(
-        "INSERT INTO identity_providers (id, org_id, kind, name, config_enc, enabled, jit_provisioning, default_role)
-         VALUES ($1,$2,'oidc',$3,$4,$5,$6,$7)
+        "INSERT INTO identity_providers (id, org_id, kind, name, config_enc, enabled, jit_provisioning, default_role, group_sync_enabled)
+         VALUES ($1,$2,'oidc',$3,$4,$5,$6,$7,$8)
          ON CONFLICT (id) DO UPDATE SET config_enc = EXCLUDED.config_enc, enabled = EXCLUDED.enabled,
-            jit_provisioning = EXCLUDED.jit_provisioning, default_role = EXCLUDED.default_role",
+            jit_provisioning = EXCLUDED.jit_provisioning, default_role = EXCLUDED.default_role,
+            group_sync_enabled = EXCLUDED.group_sync_enabled",
     )
     .bind(id)
     .bind(a.org_id)
@@ -524,6 +576,7 @@ async fn put_settings(
     .bind(req.enabled)
     .bind(req.jit_provisioning)
     .bind(role.as_str())
+    .bind(req.group_sync_enabled)
     .execute(&mut *tx)
     .await?;
     sqlx::query("UPDATE org_policies SET sso_only = $2 WHERE org_id = $1")
@@ -541,8 +594,74 @@ async fn put_settings(
         })),
     )
     .await?;
+    if sync_was != req.group_sync_enabled {
+        audit::record(
+            &mut tx,
+            &a.audit(),
+            Event::new("idp.sync.settings_changed")
+                .meta(json!({"group_sync_enabled": req.group_sync_enabled})),
+        )
+        .await?;
+    }
     tx.commit().await?;
+    if app_changed {
+        // The cached Graph token belongs to the old app credentials.
+        *st.graph_token.lock().await = None;
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The provider, if Microsoft group sync is turned on and usable.
+pub async fn sync_provider(st: &AppState, org: Uuid) -> ApiResult<microsoft::Provider> {
+    let p = microsoft::load(st, &st.db, org)
+        .await?
+        .filter(|p| p.group_sync_enabled)
+        .ok_or_else(|| ApiError::bad("Group sync is off"))?;
+    if !graph::tenant_is_specific(&p.app.tenant_id) {
+        return Err(ApiError::bad(
+            "Group sync needs your specific tenant ID (not organizations, common or consumers).",
+        ));
+    }
+    Ok(p)
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    #[serde(default)]
+    q: String,
+}
+
+async fn search_groups(
+    State(st): State<AppState>,
+    CurrentUser(a): CurrentUser,
+    Query(q): Query<SearchQuery>,
+) -> ApiResult<Json<Vec<Value>>> {
+    require_admin(&a)?;
+    let p = sync_provider(&st, a.org_id).await?;
+    let term = q.q.trim();
+    if term.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    let found = graph::search_groups(&st, &p.app, term)
+        .await
+        .map_err(group_sync::api_err)?;
+    let ids: Vec<String> = found.iter().map(|g| g.id.clone()).collect();
+    let linked: Vec<String> = sqlx::query_scalar(
+        "SELECT external_id FROM groups WHERE org_id = $1 AND source = 'idp' AND external_id = ANY($2)",
+    )
+    .bind(a.org_id)
+    .bind(&ids)
+    .fetch_all(&st.db)
+    .await?;
+    Ok(Json(
+        found
+            .into_iter()
+            .map(|g| {
+                json!({"linked": linked.contains(&g.id), "id": g.id, "display_name": g.display_name,
+                    "description": g.description, "kind": g.kind, "on_prem": g.on_prem})
+            })
+            .collect(),
+    ))
 }
 
 #[cfg(test)]

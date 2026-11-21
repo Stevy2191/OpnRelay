@@ -224,7 +224,17 @@ pub async fn search_groups(
         .unwrap_or_default())
 }
 
+/// Ids go into URL paths, so only GUIDs are accepted.
+fn check_id(id: &str) -> Result<(), GraphError> {
+    if crate::microsoft::is_guid(id) {
+        Ok(())
+    } else {
+        Err(failed("invalid id"))
+    }
+}
+
 pub async fn get_group(st: &AppState, app: &AppConfig, id: &str) -> Result<DirGroup, GraphError> {
+    check_id(id)?;
     let url = format!("{}/groups/{id}", st.cfg.ms_graph_url);
     let body = get_json(st, app, &url, &[("$select", GROUP_SELECT)], false).await?;
     dir_group(&body).ok_or_else(|| failed("unexpected group response"))
@@ -243,6 +253,7 @@ pub async fn group_user_ids(
     app: &AppConfig,
     group_id: &str,
 ) -> Result<HashSet<String>, GraphError> {
+    check_id(group_id)?;
     let path = format!("/groups/{group_id}/transitiveMembers/microsoft.graph.user");
     let items = list_all(st, app, &path, &[("$select", "id"), ("$top", "999")], true).await?;
     Ok(ids(&items))
@@ -254,6 +265,7 @@ pub async fn user_group_ids(
     app: &AppConfig,
     oid: &str,
 ) -> Result<HashSet<String>, GraphError> {
+    check_id(oid)?;
     let path = format!("/users/{oid}/transitiveMemberOf/microsoft.graph.group");
     let items = list_all(st, app, &path, &[("$select", "id"), ("$top", "999")], true).await?;
     Ok(ids(&items))

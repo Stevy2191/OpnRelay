@@ -177,6 +177,12 @@ fn fg(name: &str, kind: &'static str, members: &[&str], nested: &[&str]) -> Fake
     }
 }
 
+const GH: &str = "00000000-0000-0000-0000-0000000000a1";
+const GG: &str = "00000000-0000-0000-0000-0000000000a2";
+const GN: &str = "00000000-0000-0000-0000-0000000000a3";
+const GD: &str = "00000000-0000-0000-0000-0000000000a4";
+const U4: &str = "00000000-0000-0000-0000-0000000000b4";
+
 #[tokio::test]
 async fn graph_reads_directory() {
     let (base, fake) = fake_microsoft().await;
@@ -186,16 +192,14 @@ async fn graph_reads_directory() {
     {
         let mut f = fake.lock().unwrap();
         f.groups
-            .insert("H".into(), fg("HR Staff", "security", &["u1"], &[]));
+            .insert(GH.into(), fg("HR Staff", "security", &["u1"], &[]));
         f.groups.insert(
-            "G".into(),
-            fg("Medics", "security", &["u1", "u2", "u3"], &["N"]),
+            GG.into(),
+            fg("Medics", "security", &["u1", "u2", "u3"], &[GN]),
         );
-        f.groups
-            .insert("N".into(), fg("Nested", "m365", &["u4"], &[]));
-        f.groups
-            .insert("D".into(), fg("Dead", "security", &[], &[]));
-        f.deleted_groups.insert("D".into());
+        f.groups.insert(GN.into(), fg("Nested", "m365", &[U4], &[]));
+        f.groups.insert(GD.into(), fg("Dead", "security", &[], &[]));
+        f.deleted_groups.insert(GD.into());
         f.users.insert("u1".into(), true);
     }
     let found = graph::search_groups(&st, &cfg, "hr").await.unwrap();
@@ -206,14 +210,14 @@ async fn graph_reads_directory() {
     let m = graph::search_groups(&st, &cfg, "nest").await.unwrap();
     assert_eq!(m[0].kind, "Microsoft 365 group");
     assert_eq!(
-        graph::get_group(&st, &cfg, "G").await.unwrap().display_name,
+        graph::get_group(&st, &cfg, GG).await.unwrap().display_name,
         "Medics"
     );
 
-    let want: HashSet<String> = ["u1", "u2", "u3", "u4"].map(String::from).into();
-    assert_eq!(graph::group_user_ids(&st, &cfg, "G").await.unwrap(), want);
-    let groups = graph::user_group_ids(&st, &cfg, "u4").await.unwrap();
-    assert!(groups.contains("G") && groups.contains("N"));
+    let want: HashSet<String> = ["u1", "u2", "u3", U4].map(String::from).into();
+    assert_eq!(graph::group_user_ids(&st, &cfg, GG).await.unwrap(), want);
+    let groups = graph::user_group_ids(&st, &cfg, U4).await.unwrap();
+    assert!(groups.contains(GG) && groups.contains(GN));
 
     let en = graph::accounts_enabled(&st, &cfg, &["u1".into(), "gone".into()])
         .await
@@ -224,7 +228,7 @@ async fn graph_reads_directory() {
     );
 
     assert!(matches!(
-        graph::get_group(&st, &cfg, "D").await,
+        graph::get_group(&st, &cfg, GD).await,
         Err(GraphError::NotFound)
     ));
     app.cleanup().await;
@@ -239,7 +243,7 @@ async fn graph_caches_token_and_retries() {
     fake.lock()
         .unwrap()
         .groups
-        .insert("H".into(), fg("HR Staff", "security", &[], &[]));
+        .insert(GH.into(), fg("HR Staff", "security", &[], &[]));
     graph::search_groups(&st, &cfg, "hr").await.unwrap();
     graph::search_groups(&st, &cfg, "hr").await.unwrap();
     assert_eq!(fake.lock().unwrap().app_token_requests, 1);
@@ -262,4 +266,228 @@ fn tenant_check() {
     }
     assert!(graph::tenant_is_specific(TENANT));
     assert!(graph::tenant_is_specific("contoso.onmicrosoft.com"));
+}
+
+// ---- sync settings, search and linking ----
+
+use common::fake_ms::{CLIENT, browser, microsoft_flow, next_user};
+use common::{Session, TestApp as App};
+use reqwest::StatusCode;
+use serde_json::json;
+
+const HR: &str = "00000000-0000-0000-0000-0000000000c1";
+
+async fn sso(owner: &Session, tenant: &str, sync: bool) -> reqwest::Response {
+    owner
+        .put(
+            "/admin/sso",
+            json!({"enabled": true, "tenant_id": tenant, "client_id": CLIENT, "client_secret": "s3cret",
+                "jit_provisioning": true, "default_role": "member", "sso_only": false,
+                "group_sync_enabled": sync}),
+        )
+        .await
+}
+
+/// Sign in `oid`/`email` through the fake Microsoft; returns the OpnRelay user id.
+async fn sign_in(app: &App, fake: &common::fake_ms::S, oid: &str, email: &str) -> String {
+    next_user(fake, oid, email);
+    let b = browser();
+    microsoft_flow(&b, &format!("{}/api/v1/auth/sso/microsoft/start", app.base)).await;
+    let me: Value = b
+        .get(format!("{}/api/v1/me", app.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    me["id"].as_str().unwrap().to_string()
+}
+
+async fn actions(owner: &Session, prefix: &str) -> Vec<String> {
+    let v: Value = owner
+        .get(&format!("/audit/events?action={prefix}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["action"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn enable_sync_requires_specific_tenant() {
+    let (base, _fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    // "organizations" is rejected outright (valid_tenant); a domain is specific enough.
+    let r = sso(&owner, "organizations", true).await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert!(r.text().await.unwrap().contains("specific tenant"));
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn search_and_link() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    // Sync off: search is refused.
+    assert_eq!(sso(&owner, TENANT, false).await.status(), 204);
+    assert_eq!(
+        owner.get("/admin/sso/groups/search?q=hr").await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    let s: Value = owner.get("/admin/sso").await.json().await.unwrap();
+    assert_eq!(s["group_sync_enabled"], true);
+    assert!(s["group_sync_last_at"].is_null());
+    assert!(actions(&owner, "idp.sync.settings_changed").await.len() == 1);
+
+    let u1 = sign_in(&app, &fake, "oid-ann@acme.test", "ann@acme.test").await;
+    let u2 = sign_in(&app, &fake, "oid-bob@acme.test", "bob@acme.test").await;
+    fake.lock().unwrap().groups.insert(
+        HR.into(),
+        fg(
+            "HR Staff",
+            "security",
+            &["oid-ann@acme.test", "oid-bob@acme.test", "oid-nobody"],
+            &[],
+        ),
+    );
+
+    let found: Value = owner
+        .get("/admin/sso/groups/search?q=hr")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(found[0]["display_name"], "HR Staff");
+    assert_eq!(found[0]["id"], HR);
+    assert_eq!(found[0]["linked"], false);
+    assert_eq!(found[0]["kind"], "Security group");
+
+    let r = owner
+        .post("/admin/groups/link", json!({"external_id": HR}))
+        .await;
+    assert_eq!(r.status(), StatusCode::CREATED);
+    let g: Value = r.json().await.unwrap();
+    assert_eq!(g["source"], "idp");
+    assert_eq!(g["name"], "HR Staff");
+    assert_eq!(g["external_id"], HR);
+    let mut members: Vec<String> = g["member_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    members.sort();
+    let mut want = vec![u1, u2];
+    want.sort();
+    assert_eq!(members, want);
+
+    let found: Value = owner
+        .get("/admin/sso/groups/search?q=hr")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(found[0]["linked"], true);
+    assert_eq!(
+        owner
+            .post("/admin/groups/link", json!({"external_id": HR}))
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        owner
+            .post("/admin/groups/link", json!({"external_id": "not-a-guid"}))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(actions(&owner, "idp.group.linked").await.len(), 1);
+    assert_eq!(actions(&owner, "group.member.added").await.len(), 2);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn link_name_clash() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(HR.into(), fg("HR Staff", "security", &[], &[]));
+    let manual: Value = owner
+        .post("/admin/groups", json!({"name": "HR Staff"}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let r = owner
+        .post("/admin/groups/link", json!({"external_id": HR}))
+        .await;
+    assert_eq!(r.status(), StatusCode::CREATED);
+    let g: Value = r.json().await.unwrap();
+    assert_eq!(g["name"], "HR Staff (Microsoft)");
+    let list: Value = owner.get("/admin/groups").await.json().await.unwrap();
+    let m = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == manual["id"])
+        .unwrap();
+    assert_eq!(m["name"], "HR Staff");
+    assert_eq!(m["source"], "manual");
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn idp_members_read_only_and_unlink_audited() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(HR.into(), fg("HR Staff", "security", &[], &[]));
+    let g: Value = owner
+        .post("/admin/groups/link", json!({"external_id": HR}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let id = g["id"].as_str().unwrap();
+    let r = owner
+        .put(
+            &format!("/admin/groups/{id}/members"),
+            json!({"user_ids": []}),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("Members of Microsoft groups come from Microsoft")
+    );
+
+    assert_eq!(
+        owner.delete(&format!("/admin/groups/{id}")).await.status(),
+        StatusCode::NO_CONTENT
+    );
+    let list: Value = owner.get("/admin/groups").await.json().await.unwrap();
+    assert!(list.as_array().unwrap().iter().all(|x| x["id"] != id));
+    assert_eq!(actions(&owner, "idp.group.unlinked").await.len(), 1);
+    assert!(actions(&owner, "group.deleted").await.is_empty());
+    app.cleanup().await;
 }

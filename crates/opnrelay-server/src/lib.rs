@@ -9,6 +9,7 @@ pub mod bootstrap;
 pub mod config;
 pub mod error;
 pub mod graph;
+pub mod group_sync;
 pub mod mfa;
 pub mod microsoft;
 pub mod onedrive;
