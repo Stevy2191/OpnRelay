@@ -323,6 +323,7 @@ async fn handle_callback(
 struct UserRow {
     id: Uuid,
     status: String,
+    disabled_by: Option<String>,
 }
 
 async fn resolve_user(
@@ -338,8 +339,10 @@ async fn resolve_user(
         ip: client.ip,
     };
     let mut tx = st.db.begin().await?;
+    // Audit chain lock first, before any row this transaction writes.
+    audit::lock(&mut tx).await?;
     let linked: Option<UserRow> = sqlx::query_as(
-        "SELECT u.id, u.status FROM user_identities i JOIN users u ON u.id = i.user_id
+        "SELECT u.id, u.status, u.disabled_by FROM user_identities i JOIN users u ON u.id = i.user_id
          WHERE i.idp_id = $1 AND i.subject = $2 AND u.deleted_at IS NULL",
     )
     .bind(p.id)
@@ -350,7 +353,7 @@ async fn resolve_user(
         Some(u) => u,
         None => {
             let by_email: Option<UserRow> = sqlx::query_as(
-                "SELECT id, status FROM users WHERE email = $1 AND org_id = $2 AND deleted_at IS NULL",
+                "SELECT id, status, disabled_by FROM users WHERE email = $1 AND org_id = $2 AND deleted_at IS NULL",
             )
             .bind(&id.email)
             .bind(org)
@@ -381,6 +384,7 @@ async fn resolve_user(
                     UserRow {
                         id: uid,
                         status: "active".into(),
+                        disabled_by: None,
                     }
                 }
                 None => {
@@ -405,6 +409,24 @@ async fn resolve_user(
         }
     };
     match user.status.as_str() {
+        "disabled" if user.disabled_by.as_deref() == Some("microsoft") => {
+            // Microsoft only issues a token for an enabled account, so they are back.
+            sqlx::query(
+                "UPDATE users SET status = 'active', disabled_by = NULL, updated_at = now()
+                 WHERE id = $1",
+            )
+            .bind(user.id)
+            .execute(&mut *tx)
+            .await?;
+            audit::record(
+                &mut tx,
+                &actor,
+                Event::new("user.enabled")
+                    .target("user", user.id)
+                    .meta(json!({"source": "microsoft"})),
+            )
+            .await?;
+        }
         "disabled" => return Err(ApiError::bad("your OpnRelay account is disabled")),
         "invited" => {
             // Signing in with the company account completes the invitation.

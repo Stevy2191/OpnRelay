@@ -265,11 +265,15 @@ async fn update_user(
         if s == "active" && target.status == "invited" {
             return Err(ApiError::bad("the user must accept their invitation first"));
         }
-        sqlx::query("UPDATE users SET status = $2, updated_at = now() WHERE id = $1")
-            .bind(id)
-            .bind(s)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE users SET status = $2, updated_at = now(),
+                disabled_by = CASE WHEN $2 = 'disabled' THEN 'admin' END
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(s)
+        .execute(&mut *tx)
+        .await?;
         if s == "disabled" {
             sqlx::query("WITH d AS (DELETE FROM sessions WHERE user_id = $1) UPDATE device_grants SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL")
                 .bind(id)

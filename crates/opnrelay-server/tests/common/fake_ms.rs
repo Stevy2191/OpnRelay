@@ -70,6 +70,8 @@ async fn authorize(
     f.n += 1;
     let code = format!("code{}", f.n);
     let (oid, email, tid) = f.next_user.clone();
+    // Whoever signs in exists in the directory (tests may later disable or remove them).
+    f.users.entry(oid.clone()).or_insert(true);
     f.codes.insert(
         code.clone(),
         (q.get("nonce").cloned().unwrap_or_default(), oid, email, tid),

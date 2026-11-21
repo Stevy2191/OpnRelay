@@ -1495,3 +1495,376 @@ async fn user_updated_audit_records_final_role() {
     assert_eq!(last["metadata"]["org_role"], "member");
     app.cleanup().await;
 }
+
+// ---- leavers and the safety brake ----
+
+use opnrelay_server::group_sync::brake_trips;
+
+#[test]
+fn brake_boundary() {
+    assert!(!brake_trips(10, 20));
+    assert!(brake_trips(11, 50));
+    assert!(!brake_trips(11, 60));
+    assert!(!brake_trips(0, 0));
+}
+
+/// Sign `oid` in and keep the browser, so the test can use the user's own session.
+async fn sign_in_browser(
+    app: &App,
+    fake: &common::fake_ms::S,
+    oid: &str,
+    email: &str,
+) -> (String, reqwest::Client) {
+    next_user(fake, oid, email);
+    let b = browser();
+    microsoft_flow(&b, &format!("{}/api/v1/auth/sso/microsoft/start", app.base)).await;
+    let me: Value = b
+        .get(format!("{}/api/v1/me", app.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    (me["id"].as_str().unwrap().to_string(), b)
+}
+
+async fn me_status(app: &App, b: &reqwest::Client) -> StatusCode {
+    b.get(format!("{}/api/v1/me", app.base))
+        .send()
+        .await
+        .unwrap()
+        .status()
+}
+
+async fn user_state(app: &App, id: &str) -> (String, Option<String>) {
+    sqlx::query_as("SELECT status, disabled_by FROM users WHERE id = $1::uuid")
+        .bind(id)
+        .fetch_one(&app.state().db)
+        .await
+        .unwrap()
+}
+
+fn set_enabled(fake: &common::fake_ms::S, oid: &str, enabled: bool) {
+    fake.lock().unwrap().users.insert(oid.into(), enabled);
+}
+
+async fn leaver_events(owner: &Session) -> Vec<Value> {
+    let v: Value = owner
+        .get("/audit/events?action=user.disabled")
+        .await
+        .json()
+        .await
+        .unwrap();
+    v.as_array().unwrap().clone()
+}
+
+const LV: &str = "00000000-0000-0000-0000-0000000000d1";
+
+async fn setup_sso() -> (App, common::fake_ms::S, Session) {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    (app, fake, owner)
+}
+
+#[tokio::test]
+async fn leaver_disabled_and_signed_out() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    assert_eq!(me_status(&app, &b).await, StatusCode::OK);
+
+    // A desktop device grant for the same person.
+    let csrf: Value = b
+        .get(format!("{}/api/v1/me", app.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let csrf = csrf["csrf_token"].as_str().unwrap().to_string();
+    let verifier = "v".repeat(50);
+    let challenge = {
+        use base64::Engine;
+        use sha2::Digest;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(&verifier))
+    };
+    let redirect = "http://127.0.0.1:53682/callback";
+    let auth: Value = b
+        .post(format!("{}/api/v1/oauth/authorize", app.base))
+        .header("x-csrf-token", &csrf)
+        .json(
+            &json!({"client_id": "opnrelay-desktop", "redirect_uri": redirect,
+            "code_challenge": challenge, "code_challenge_method": "S256", "device_name": "Laptop"}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let code = auth["redirect_to"]
+        .as_str()
+        .unwrap()
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_string();
+    let anon = reqwest::Client::new();
+    let tok: Value = anon
+        .post(format!("{}/api/v1/oauth/token", app.base))
+        .json(&json!({"grant_type": "authorization_code", "code": code,
+            "code_verifier": verifier, "redirect_uri": redirect, "client_id": "opnrelay-desktop"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let access = tok["access_token"].as_str().unwrap().to_string();
+    let refresh = tok["refresh_token"].as_str().unwrap().to_string();
+    let bearer = |t: String| {
+        let (c, u) = (anon.clone(), format!("{}/api/v1/me", app.base));
+        async move { c.get(u).bearer_auth(t).send().await.unwrap().status() }
+    };
+    assert_eq!(bearer(access.clone()).await, StatusCode::OK);
+
+    set_enabled(&fake, LV, false);
+    let sum = sync_now(&owner).await;
+    assert_eq!(sum["disabled"], 1);
+
+    assert_eq!(me_status(&app, &b).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(bearer(access).await, StatusCode::UNAUTHORIZED);
+    let r = anon
+        .post(format!("{}/api/v1/oauth/token", app.base))
+        .json(&json!({"grant_type": "refresh_token", "refresh_token": refresh}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        user_state(&app, &id).await,
+        ("disabled".into(), Some("microsoft".into()))
+    );
+    let ev = leaver_events(&owner).await;
+    assert_eq!(ev.len(), 1);
+    assert_eq!(ev[0]["metadata"]["source"], "microsoft");
+    assert_eq!(ev[0]["metadata"]["reason"], "disabled");
+
+    // A second run has nothing left to do.
+    assert_eq!(sync_now(&owner).await["disabled"], 0);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn deleted_user_treated_as_leaver() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    fake.lock().unwrap().users.remove(LV);
+    assert_eq!(sync_now(&owner).await["disabled"], 1);
+    assert_eq!(user_state(&app, &id).await.0, "disabled");
+    let ev = leaver_events(&owner).await;
+    assert_eq!(ev[0]["metadata"]["reason"], "deleted");
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn leaver_leaves_linked_groups() {
+    let (app, fake, owner) = setup_sso().await;
+    let (_id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(IT.into(), fg("IT", "security", &[LV], &[]));
+    let gid = link(&owner, IT).await;
+    assert_eq!(member_count(&app, &gid).await, 1);
+    set_enabled(&fake, LV, false);
+    assert_eq!(sync_now(&owner).await["disabled"], 1);
+    assert_eq!(member_count(&app, &gid).await, 0);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn reenable_on_sign_in_only_if_microsoft_disabled() {
+    let (app, fake, owner) = setup_sso().await;
+    let oid2 = "00000000-0000-0000-0000-0000000000d2";
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    let (id2, _b2) = sign_in_browser(&app, &fake, oid2, "kim@acme.test").await;
+
+    set_enabled(&fake, LV, false);
+    assert_eq!(sync_now(&owner).await["disabled"], 1);
+    assert_eq!(user_state(&app, &id).await.0, "disabled");
+    // Disabled by hand: Microsoft sign-in must not undo it.
+    let r = owner
+        .patch(
+            &format!("/admin/users/{id2}"),
+            json!({"status": "disabled"}),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(
+        user_state(&app, &id2).await,
+        ("disabled".into(), Some("admin".into()))
+    );
+
+    set_enabled(&fake, LV, true);
+    let (_, b) = {
+        next_user(&fake, LV, "lee@acme.test");
+        let b = browser();
+        microsoft_flow(&b, &format!("{}/api/v1/auth/sso/microsoft/start", app.base)).await;
+        (0, b)
+    };
+    assert_eq!(me_status(&app, &b).await, StatusCode::OK);
+    assert_eq!(user_state(&app, &id).await, ("active".into(), None));
+    assert_eq!(actions(&owner, "user.enabled").await, vec!["user.enabled"]);
+
+    next_user(&fake, oid2, "kim@acme.test");
+    let b2 = browser();
+    microsoft_flow(
+        &b2,
+        &format!("{}/api/v1/auth/sso/microsoft/start", app.base),
+    )
+    .await;
+    assert_eq!(me_status(&app, &b2).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(user_state(&app, &id2).await.0, "disabled");
+
+    // Admin re-enable clears the marker.
+    let r = owner
+        .patch(&format!("/admin/users/{id2}"), json!({"status": "active"}))
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(user_state(&app, &id2).await, ("active".into(), None));
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn owner_never_disabled() {
+    let (app, fake, owner) = setup_sso().await;
+    sqlx::query(
+        "INSERT INTO user_identities (user_id, idp_id, subject)
+         SELECT u.id, ip.id, 'oid-owner' FROM users u, identity_providers ip
+         WHERE u.email = 'owner@acme.test'",
+    )
+    .execute(&app.state().db)
+    .await
+    .unwrap();
+    set_enabled(&fake, "oid-owner", false);
+    let sum = sync_now(&owner).await;
+    assert_eq!(sum["disabled"], 0);
+    assert!(
+        sum["error"]
+            .as_str()
+            .unwrap()
+            .contains("is disabled in Microsoft"),
+        "{sum}"
+    );
+    let err: String =
+        sqlx::query_scalar("SELECT group_sync_last_error FROM identity_providers LIMIT 1")
+            .fetch_one(&app.state().db)
+            .await
+            .unwrap();
+    assert!(err.contains("Owner ") && err.contains("is disabled in Microsoft"));
+    let st: String = sqlx::query_scalar("SELECT status FROM users WHERE email = 'owner@acme.test'")
+        .fetch_one(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(st, "active");
+    app.cleanup().await;
+}
+
+async fn pending(app: &App) -> Option<i32> {
+    sqlx::query_scalar("SELECT group_sync_brake_pending FROM identity_providers LIMIT 1")
+        .fetch_one(&app.state().db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn brake_blocks_mass_disable() {
+    let (app, fake, owner) = setup_sso().await;
+    let db = app.state().db;
+    for i in 0..50 {
+        let oid = format!("00000000-0000-0000-0000-{i:012}");
+        sqlx::query(
+            "WITH u AS (INSERT INTO users (id, org_id, email, display_name, org_role, status)
+                        SELECT gen_random_uuid(), id, $1, 'x', 'member', 'active'
+                        FROM organizations LIMIT 1 RETURNING id)
+             INSERT INTO user_identities (user_id, idp_id, subject)
+             SELECT u.id, ip.id, $2 FROM u, identity_providers ip",
+        )
+        .bind(format!("p{i}@acme.test"))
+        .bind(&oid)
+        .execute(&db)
+        .await
+        .unwrap();
+        set_enabled(&fake, &oid, i >= 11);
+    }
+    let sum = sync_now(&owner).await;
+    assert_eq!(sum["disabled"], 0);
+    assert_eq!(sum["brake"], 11);
+    assert!(
+        sum["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("Sync would have disabled 11 people; nothing was changed")
+    );
+    assert_eq!(pending(&app).await, Some(11));
+    let off: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE status = 'disabled'")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(off, 0);
+    let ev: Value = owner
+        .get("/audit/events?action=idp.sync.failed")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ev[0]["metadata"]["reason"], "brake");
+    assert_eq!(ev[0]["metadata"]["count"], 11);
+
+    // Confirming applies to that one run.
+    let r = owner
+        .post("/admin/sso/sync", json!({"confirm_brake": true}))
+        .await;
+    let sum: Value = r.json().await.unwrap();
+    assert_eq!(sum["disabled"], 11, "{sum}");
+    assert_eq!(pending(&app).await, None);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn graph_error_disables_no_one() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    set_enabled(&fake, LV, false);
+    fake.lock().unwrap().users_fail = true;
+    let sum = sync_now(&owner).await;
+    assert_eq!(sum["disabled"], 0);
+    assert!(sum["error"].is_string());
+    assert_eq!(user_state(&app, &id).await.0, "active");
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn failed_group_skips_leaver_step() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(IT.into(), fg("IT", "security", &[LV], &[]));
+    link(&owner, IT).await;
+    set_enabled(&fake, LV, false);
+    fake.lock().unwrap().members_fail = true;
+    let sum = sync_now(&owner).await;
+    assert_eq!(sum["disabled"], 0);
+    assert!(sum["error"].is_string());
+    assert_eq!(user_state(&app, &id).await.0, "active");
+    app.cleanup().await;
+}

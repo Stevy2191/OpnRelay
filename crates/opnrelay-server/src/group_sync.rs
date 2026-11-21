@@ -433,6 +433,139 @@ pub fn due(last: Option<OffsetDateTime>, now: OffsetDateTime) -> bool {
     last.is_none_or(|l| l < now - time::Duration::hours(1))
 }
 
+/// True when disabling `to_disable` of `linked_users` looks like a misconfiguration
+/// rather than leavers: more than 10 people and more than 20% of linked users.
+pub fn brake_trips(to_disable: usize, linked_users: usize) -> bool {
+    to_disable > 10 && to_disable * 5 > linked_users
+}
+
+/// What the leaver step found.
+#[derive(Debug, Default)]
+struct LeaverOutcome {
+    disabled: u32,
+    brake: Option<u32>,
+    /// Shown to the administrator (owner warnings, the brake message).
+    warning: Option<String>,
+}
+
+/// Disable people Microsoft reports as disabled or deleted. Any Graph error
+/// returns `Err` before anything is changed. Owners are never touched.
+async fn disable_leavers(
+    st: &AppState,
+    org: Uuid,
+    p: &Provider,
+    actor: &AuditActor,
+    confirm_brake: bool,
+) -> Result<LeaverOutcome, GraphError> {
+    // (user, name, role, oid)
+    let linked: Vec<(Uuid, String, String, String)> = sqlx::query_as(
+        "SELECT u.id, u.display_name, u.org_role, i.subject
+         FROM user_identities i JOIN users u ON u.id = i.user_id
+         WHERE i.idp_id = $1 AND u.org_id = $2 AND u.deleted_at IS NULL
+           AND u.status = 'active'
+         ORDER BY u.id",
+    )
+    .bind(p.id)
+    .bind(org)
+    .fetch_all(&st.db)
+    .await
+    .map_err(db_err)?;
+    let oids: Vec<String> = linked.iter().map(|l| l.3.clone()).collect();
+    let state = graph::accounts_enabled(st, &p.app, &oids).await?;
+
+    let mut out = LeaverOutcome::default();
+    let mut owners = Vec::new();
+    let mut leavers: Vec<(Uuid, &'static str)> = Vec::new();
+    for (id, name, role, oid) in &linked {
+        let reason = match state.get(oid) {
+            Some(true) => continue,
+            Some(false) => "disabled",
+            None => "deleted",
+        };
+        if role == "owner" {
+            owners.push(format!("Owner {name} is disabled in Microsoft"));
+        } else {
+            leavers.push((*id, reason));
+        }
+    }
+    let mut warnings = owners;
+    if brake_trips(leavers.len(), linked.len()) && !confirm_brake {
+        let n = leavers.len() as u32;
+        out.brake = Some(n);
+        warnings.insert(
+            0,
+            format!(
+                "Sync would have disabled {n} people; nothing was changed. \
+                 Check the Microsoft settings, then run Sync now and confirm."
+            ),
+        );
+        out.warning = Some(warnings.join("; "));
+        return Ok(out);
+    }
+    if !warnings.is_empty() {
+        out.warning = Some(warnings.join("; "));
+    }
+    if leavers.is_empty() {
+        return Ok(out);
+    }
+
+    let mut tx = st.db.begin().await.map_err(db_err)?;
+    // Audit chain lock first, before any row this transaction writes.
+    audit::lock(&mut tx).await.map_err(db_err)?;
+    for (uid, reason) in leavers {
+        // Re-checked under the lock: an admin may have acted since we looked.
+        let done = sqlx::query(
+            "UPDATE users SET status = 'disabled', disabled_by = 'microsoft', updated_at = now()
+             WHERE id = $1 AND status = 'active' AND org_role <> 'owner'",
+        )
+        .bind(uid)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?
+        .rows_affected();
+        if done == 0 {
+            continue;
+        }
+        sqlx::query("WITH d AS (DELETE FROM sessions WHERE user_id = $1) UPDATE device_grants SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL")
+            .bind(uid)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        let left: Vec<Uuid> = sqlx::query_scalar(
+            "DELETE FROM group_members gm USING groups g
+             WHERE gm.user_id = $1 AND g.id = gm.group_id AND g.source = 'idp'
+             RETURNING gm.group_id",
+        )
+        .bind(uid)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        for gid in left {
+            audit::record(
+                &mut tx,
+                actor,
+                Event::new("group.member.removed")
+                    .target("group", gid)
+                    .meta(json!({"user_id": uid, "source": "microsoft"})),
+            )
+            .await
+            .map_err(db_err)?;
+        }
+        audit::record(
+            &mut tx,
+            actor,
+            Event::new("user.disabled")
+                .target("user", uid)
+                .meta(json!({"source": "microsoft", "reason": reason})),
+        )
+        .await
+        .map_err(db_err)?;
+        out.disabled += 1;
+    }
+    tx.commit().await.map_err(db_err)?;
+    Ok(out)
+}
+
 /// The group is gone from Microsoft: empty it and remember since when.
 async fn mark_missing(
     st: &AppState,
@@ -499,7 +632,7 @@ pub async fn sync_all(
 async fn sync_all_inner(
     st: &AppState,
     actor: &AuditActor,
-    _confirm_brake: bool,
+    confirm_brake: bool,
 ) -> anyhow::Result<RunSummary> {
     let mut sum = RunSummary::default();
     let Some(org): Option<Uuid> =
@@ -540,7 +673,7 @@ async fn sync_all_inner(
         sum.error = Some("a sync is already running".into());
         return Ok(sum);
     }
-    let res = run_locked(st, org, &p, actor, &mut sum).await;
+    let res = run_locked(st, org, &p, actor, confirm_brake, &mut sum).await;
     let unlocked = sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
         .bind(SYNC_LOCK_KEY)
         .fetch_one(&mut *lock)
@@ -558,15 +691,17 @@ async fn run_locked(
     org: Uuid,
     p: &Provider,
     actor: &AuditActor,
+    confirm_brake: bool,
     sum: &mut RunSummary,
 ) -> anyhow::Result<()> {
-    let (prev_error, logged_at): (Option<String>, Option<OffsetDateTime>) = sqlx::query_as(
-        "SELECT group_sync_last_error, group_sync_failed_logged_at
+    let (prev_error, logged_at, prev_brake): (Option<String>, Option<OffsetDateTime>, Option<i32>) =
+        sqlx::query_as(
+            "SELECT group_sync_last_error, group_sync_failed_logged_at, group_sync_brake_pending
          FROM identity_providers WHERE id = $1",
-    )
-    .bind(p.id)
-    .fetch_one(&st.db)
-    .await?;
+        )
+        .bind(p.id)
+        .fetch_one(&st.db)
+        .await?;
 
     let groups: Vec<Uuid> = sqlx::query_scalar(
         "SELECT id FROM groups WHERE org_id = $1 AND source = 'idp' ORDER BY name, id",
@@ -599,6 +734,27 @@ async fn run_locked(
         }
     }
 
+    // Leavers: only on a complete run, so a partial read never disables anyone.
+    let mut clear_brake = false;
+    if let Some(e) = &sum.error {
+        sum.error = Some(format!("{e} (leavers were not checked in this run)"));
+    } else {
+        match disable_leavers(st, org, p, actor, confirm_brake).await {
+            Ok(o) => {
+                sum.disabled = o.disabled;
+                sum.brake = o.brake;
+                sum.error = o.warning;
+                clear_brake = o.brake.is_none();
+            }
+            Err(e) => {
+                sum.error = Some(match e {
+                    GraphError::Failed(m) => format!("{m} (leavers were not checked in this run)"),
+                    GraphError::NotFound => "leavers were not checked in this run".into(),
+                });
+            }
+        }
+    }
+
     let roles: sqlx::Result<u32> = async {
         let mut tx = st.db.begin().await?;
         let n = recompute_roles(&mut tx, org, None, actor).await?;
@@ -615,17 +771,28 @@ async fn run_locked(
     sqlx::query(
         "UPDATE identity_providers SET group_sync_last_at = now(),
             group_sync_last_ok_at = CASE WHEN $2::text IS NULL THEN now() ELSE group_sync_last_ok_at END,
-            group_sync_last_error = $2
+            group_sync_last_error = $2,
+            group_sync_brake_pending = CASE WHEN $3 THEN NULL
+                                            ELSE COALESCE($4, group_sync_brake_pending) END
          WHERE id = $1",
     )
     .bind(p.id)
     .bind(&sum.error)
+    .bind(clear_brake)
+    .bind(sum.brake.map(|n| n as i32))
     .execute(&st.db)
     .await?;
 
     if let Some(err) = &sum.error {
         let now = OffsetDateTime::now_utc();
-        let log = prev_error.is_none() || logged_at.is_none_or(|t| t < now - FAILED_LOG_EVERY);
+        let new_brake = sum.brake.is_some() && prev_brake.is_none();
+        let log = prev_error.is_none()
+            || new_brake
+            || logged_at.is_none_or(|t| t < now - FAILED_LOG_EVERY);
+        let meta = match sum.brake {
+            Some(n) => json!({"reason": "brake", "count": n, "error": err}),
+            None => json!({"error": err}),
+        };
         if log {
             let mut tx = st.db.begin().await?;
             audit::record(
@@ -633,7 +800,7 @@ async fn run_locked(
                 actor,
                 Event::new("idp.sync.failed")
                     .target("identity_provider", p.id)
-                    .meta(json!({"error": err})),
+                    .meta(meta),
             )
             .await?;
             sqlx::query(
