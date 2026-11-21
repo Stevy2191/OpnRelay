@@ -28,7 +28,12 @@
         await api('/auth/mfa/verify', { body: { code } });
       }
       await refresh();
-      go('/');
+      let next = '/';
+      try {
+        next = sessionStorage.getItem('after_login') || '/';
+        sessionStorage.removeItem('after_login');
+      } catch { /* storage unavailable */ }
+      go(next.startsWith('/') ? next : '/');
     } catch (err) {
       const msg = errorText(err);
       error = msg === 'authentication required' ? (step === 'mfa' ? 'That code is not valid.' : 'Incorrect email or password.') : msg;

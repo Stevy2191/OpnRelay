@@ -820,3 +820,226 @@ async fn branding_and_exports() {
     assert_eq!(json(owner.get("/audit/verify").await).await["ok"], true);
     app.cleanup().await;
 }
+
+fn pkce() -> (String, String) {
+    use base64::Engine;
+    let verifier = opnrelay_crypto::random_token();
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(opnrelay_crypto::sha256(verifier.as_bytes()));
+    (verifier, challenge)
+}
+
+#[tokio::test]
+async fn oauth_native_clients() {
+    let app = TestApp::spawn().await;
+    let owner = app.owner().await;
+    let redirect = "http://127.0.0.1:53682/callback";
+    let (verifier, challenge) = pkce();
+
+    // Bad redirect and missing PKCE are refused.
+    let bad = owner
+        .post(
+            "/oauth/authorize",
+            json!({"client_id": "opnrelay-desktop", "redirect_uri": "https://evil.test/cb",
+        "code_challenge": challenge, "code_challenge_method": "S256"}),
+        )
+        .await;
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+    let bad = owner
+        .post(
+            "/oauth/authorize",
+            json!({"client_id": "opnrelay-desktop", "redirect_uri": redirect,
+        "code_challenge": "short", "code_challenge_method": "plain"}),
+        )
+        .await;
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+
+    let auth = json(owner.post("/oauth/authorize", json!({"client_id": "opnrelay-desktop", "redirect_uri": redirect,
+        "code_challenge": challenge, "code_challenge_method": "S256", "state": "xyz 1", "device_name": "Olive's laptop"})).await).await;
+    let to = auth["redirect_to"].as_str().unwrap();
+    assert!(to.starts_with("http://127.0.0.1:53682/callback?code="));
+    assert!(to.ends_with("&state=xyz%201"));
+    let code = to
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_string();
+
+    let anon = Session::new(&app.base);
+    // Wrong verifier fails and burns the code.
+    let wrong = anon
+        .post(
+            "/oauth/token",
+            json!({"grant_type": "authorization_code", "code": code, "code_verifier": "nope",
+        "redirect_uri": redirect, "client_id": "opnrelay-desktop"}),
+        )
+        .await;
+    assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
+    let again = anon
+        .post(
+            "/oauth/token",
+            json!({"grant_type": "authorization_code", "code": code, "code_verifier": verifier,
+        "redirect_uri": redirect, "client_id": "opnrelay-desktop"}),
+        )
+        .await;
+    assert_eq!(
+        again.status(),
+        StatusCode::BAD_REQUEST,
+        "codes are single use"
+    );
+
+    // Proper flow.
+    let to = json(owner.post("/oauth/authorize", json!({"client_id": "opnrelay-desktop", "redirect_uri": redirect,
+        "code_challenge": challenge, "code_challenge_method": "S256", "device_name": "Olive's laptop"})).await).await;
+    let code = to["redirect_to"]
+        .as_str()
+        .unwrap()
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_string();
+    let tok = json(
+        anon.post(
+            "/oauth/token",
+            json!({"grant_type": "authorization_code", "code": code, "code_verifier": verifier,
+        "redirect_uri": redirect, "client_id": "opnrelay-desktop"}),
+        )
+        .await,
+    )
+    .await;
+    let access = tok["access_token"].as_str().unwrap().to_string();
+    let refresh = tok["refresh_token"].as_str().unwrap().to_string();
+    assert_eq!(tok["expires_in"], 900);
+
+    // Bearer requests work without cookies or CSRF tokens.
+    let c = reqwest::Client::new();
+    let base = format!("{}/api/v1", app.base);
+    let me: Value = c
+        .get(format!("{base}/me"))
+        .bearer_auth(&access)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(me["email"], "owner@acme.test");
+    let ws: Value = c
+        .post(format!("{base}/workspaces"))
+        .bearer_auth(&access)
+        .json(&json!({"name": "Desk"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(ws["id"].is_string());
+    let r = c
+        .get(format!("{base}/me"))
+        .bearer_auth("garbage")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+
+    // Refresh rotates both tokens; the old access token stops working.
+    let t2 = json(
+        anon.post(
+            "/oauth/token",
+            json!({"grant_type": "refresh_token", "refresh_token": refresh}),
+        )
+        .await,
+    )
+    .await;
+    let access2 = t2["access_token"].as_str().unwrap().to_string();
+    assert_ne!(access2, access);
+    assert_eq!(
+        c.get(format!("{base}/me"))
+            .bearer_auth(&access)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        c.get(format!("{base}/me"))
+            .bearer_auth(&access2)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+
+    // Reusing the old refresh token revokes the whole grant.
+    let reuse = anon
+        .post(
+            "/oauth/token",
+            json!({"grant_type": "refresh_token", "refresh_token": refresh}),
+        )
+        .await;
+    assert_eq!(reuse.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        c.get(format!("{base}/me"))
+            .bearer_auth(&access2)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    // A fresh device shows up in the list and can be revoked by the user.
+    let to = json(owner.post("/oauth/authorize", json!({"client_id": "opnrelay-extension",
+        "redirect_uri": "https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/", "code_challenge": challenge,
+        "code_challenge_method": "S256", "device_name": "Chrome"})).await).await;
+    let code = to["redirect_to"]
+        .as_str()
+        .unwrap()
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_string();
+    let t3 = json(anon.post("/oauth/token", json!({"grant_type": "authorization_code", "code": code, "code_verifier": verifier,
+        "redirect_uri": "https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/", "client_id": "opnrelay-extension"})).await).await;
+    let devices = json(owner.get("/me/devices").await).await;
+    assert_eq!(devices.as_array().unwrap().len(), 1);
+    assert_eq!(devices[0]["device_name"], "Chrome");
+    let did = devices[0]["id"].as_str().unwrap();
+    assert_eq!(
+        owner.delete(&format!("/me/devices/{did}")).await.status(),
+        StatusCode::NO_CONTENT
+    );
+    let a3 = t3["access_token"].as_str().unwrap();
+    assert_eq!(
+        c.get(format!("{base}/me"))
+            .bearer_auth(a3)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let actions: Vec<String> = json(owner.get("/audit/events?action=oauth.").await)
+        .await
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["action"].as_str().unwrap().to_string())
+        .collect();
+    assert!(actions.contains(&"oauth.refresh_reuse_detected".to_string()));
+    assert!(actions.contains(&"oauth.device.revoked".to_string()));
+    app.cleanup().await;
+}

@@ -411,7 +411,13 @@ async fn invite_accept(
     .bind(&name)
     .execute(&mut *tx)
     .await?;
-    // A password reset signs the user out everywhere.
+    // A password reset signs the user out everywhere, including devices.
+    sqlx::query(
+        "UPDATE device_grants SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(inv.user_id)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query("DELETE FROM sessions WHERE user_id = $1")
         .bind(inv.user_id)
         .execute(&mut *tx)

@@ -12,6 +12,7 @@
   import Admin from './routes/Admin.svelte';
   import Audit from './routes/Audit.svelte';
   import WorkspaceSettings from './routes/WorkspaceSettings.svelte';
+  import Connect from './routes/Connect.svelte';
 
   onMount(refresh);
 
@@ -20,7 +21,13 @@
 
   $effect(() => {
     if (session.loading) return;
-    if (!session.me && !isPublic) go('/login');
+    if (!session.me && !isPublic) {
+      // Come back here after signing in (e.g. the app-connect page).
+      if (route.path !== '/' && !match('/login', route.path)) {
+        try { sessionStorage.setItem('after_login', route.path); } catch { /* storage unavailable */ }
+      }
+      go('/login');
+    }
     else if (session.me?.mfa_setup_required && !match('/account', route.path)) go('/account');
   });
 
@@ -63,7 +70,9 @@
     {#if me.mfa_setup_required}
       <p class="error">Your organisation requires two-factor authentication. Set it up below to continue.</p>
     {/if}
-    {#if match('/guides/:id/edit', route.path)}
+    {#if match('/connect', route.path)}
+      <Connect />
+    {:else if match('/guides/:id/edit', route.path)}
       {#key route.path}<GuideEdit id={match('/guides/:id/edit', route.path)!.id} />{/key}
     {:else if match('/guides/:id', route.path)}
       {#key route.path}<GuideView id={match('/guides/:id', route.path)!.id} />{/key}

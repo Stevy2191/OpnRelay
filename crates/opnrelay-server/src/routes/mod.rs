@@ -13,6 +13,7 @@ pub mod exports;
 pub mod guides;
 pub mod me;
 pub mod media;
+pub mod oauth;
 pub mod workspaces;
 
 /// All JSON API routes, mounted under `/api/v1`.
@@ -25,6 +26,7 @@ pub fn api() -> Router<AppState> {
         .merge(guides::router())
         .merge(media::router())
         .merge(exports::router())
+        .merge(oauth::router())
         .merge(audit_log::router())
 }
 

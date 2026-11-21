@@ -198,9 +198,73 @@ fn check_csrf(parts: &Parts, expected: &str) -> ApiResult<()> {
     }
 }
 
+fn mfa_required(policy: &str, role: OrgRole) -> bool {
+    match policy {
+        "all" => true,
+        "admins" => role.is_admin(),
+        _ => false,
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct BearerRow {
+    grant_id: Uuid,
+    user_id: Uuid,
+    org_id: Uuid,
+    email: String,
+    display_name: String,
+    org_role: String,
+    mfa_requirement: String,
+    mfa_enabled: bool,
+}
+
+/// Authenticate a native client (desktop recorder, browser extension) by its
+/// OAuth access token. Bearer tokens are never sent automatically by
+/// browsers, so no CSRF check is needed on this path.
+async fn actor_from_bearer(parts: &Parts, state: &AppState, token: &str) -> ApiResult<Actor> {
+    let row: Option<BearerRow> = sqlx::query_as(
+        "SELECT g.id AS grant_id, u.id AS user_id, u.org_id, u.email::text AS email, u.display_name, u.org_role,
+                p.mfa_requirement,
+                EXISTS (SELECT 1 FROM mfa_factors f WHERE f.user_id = u.id AND f.confirmed_at IS NOT NULL) AS mfa_enabled
+         FROM device_grants g
+         JOIN users u ON u.id = g.user_id
+         JOIN org_policies p ON p.org_id = u.org_id
+         WHERE g.access_hash = $1 AND g.revoked_at IS NULL AND g.access_expires_at > now()
+           AND u.status = 'active' AND u.deleted_at IS NULL",
+    )
+    .bind(opnrelay_crypto::hash_token(token))
+    .fetch_optional(&state.db)
+    .await?;
+    let row = row.ok_or(ApiError::Unauthorized)?;
+    let role = OrgRole::parse(&row.org_role).ok_or_else(|| anyhow::anyhow!("bad role in db"))?;
+    Ok(Actor {
+        user_id: row.user_id,
+        org_id: row.org_id,
+        email: row.email,
+        display_name: row.display_name,
+        role,
+        session_id: row.grant_id,
+        csrf_token: String::new(),
+        ip: client_ip(parts, state.cfg.trust_proxy),
+        mfa_enabled: row.mfa_enabled,
+        mfa_setup_required: mfa_required(&row.mfa_requirement, role) && !row.mfa_enabled,
+    })
+}
+
 async fn actor_from_parts(parts: &Parts, state: &AppState) -> ApiResult<Actor> {
     if let Some(actor) = parts.extensions.get::<Actor>() {
         return Ok(actor.clone());
+    }
+    if let Some(auth) = parts
+        .headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        let token = auth
+            .strip_prefix("Bearer ")
+            .ok_or(ApiError::Unauthorized)?
+            .trim();
+        return actor_from_bearer(parts, state, token).await;
     }
     let (row, ip) = load_session(parts, state).await?;
     if row.mfa_pending {
@@ -215,11 +279,7 @@ async fn actor_from_parts(parts: &Parts, state: &AppState) -> ApiResult<Actor> {
             .await?;
     }
     let role = OrgRole::parse(&row.org_role).ok_or_else(|| anyhow::anyhow!("bad role in db"))?;
-    let mfa_required = match row.mfa_requirement.as_str() {
-        "all" => true,
-        "admins" => role.is_admin(),
-        _ => false,
-    };
+    let mfa_required = mfa_required(&row.mfa_requirement, role);
     Ok(Actor {
         user_id: row.user_id,
         org_id: row.org_id,

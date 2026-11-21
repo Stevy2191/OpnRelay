@@ -250,7 +250,7 @@ async fn update_user(
             .execute(&mut *tx)
             .await?;
         if s == "disabled" {
-            sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+            sqlx::query("WITH d AS (DELETE FROM sessions WHERE user_id = $1) UPDATE device_grants SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL")
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
@@ -328,7 +328,7 @@ async fn reset_mfa(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+    sqlx::query("WITH d AS (DELETE FROM sessions WHERE user_id = $1) UPDATE device_grants SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL")
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -350,7 +350,7 @@ async fn revoke_sessions(
     require_admin(&a)?;
     load_user(&st, &a, id).await?;
     let mut tx = st.db.begin().await?;
-    sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+    sqlx::query("WITH d AS (DELETE FROM sessions WHERE user_id = $1) UPDATE device_grants SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL")
         .bind(id)
         .execute(&mut *tx)
         .await?;

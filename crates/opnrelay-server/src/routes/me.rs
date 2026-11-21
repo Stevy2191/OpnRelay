@@ -100,7 +100,12 @@ async fn change_password(
         .bind(hash)
         .execute(&mut *tx)
         .await?;
-    // Sign out other sessions.
+    // Sign out other sessions and connected devices.
+    sqlx::query("UPDATE device_grants SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2")
+        .bind(a.user_id)
+        .bind(a.session_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND id <> $2")
         .bind(a.user_id)
         .bind(a.session_id)

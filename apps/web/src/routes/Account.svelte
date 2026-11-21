@@ -7,7 +7,9 @@
 
   type SessionInfo = { id: string; ip: string | null; user_agent: string | null; created_at: string; last_seen_at: string; current: boolean };
 
+  type Device = { id: string; client_id: string; device_name: string; ip: string | null; last_used_at: string };
   let sessions = $state<SessionInfo[]>([]);
+  let devices = $state<Device[]>([]);
   let pw = $state({ current: '', next: '', confirm: '' });
   let pwMsg = $state('');
   let pwErr = $state('');
@@ -19,10 +21,15 @@
 
   async function loadSessions() {
     try {
-      sessions = await api<SessionInfo[]>('/me/sessions');
+      [sessions, devices] = await Promise.all([api<SessionInfo[]>('/me/sessions'), api<Device[]>('/me/devices')]);
     } catch {
       sessions = [];
     }
+  }
+
+  async function disconnect(id: string) {
+    await api(`/me/devices/${id}`, { method: 'DELETE' });
+    loadSessions();
   }
   onMount(loadSessions);
 
@@ -159,6 +166,29 @@
           </tbody>
         </table>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>Connected apps</h2>
+      {#if devices.length === 0}
+        <p class="muted">No desktop recorder or browser extension is connected.</p>
+      {:else}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>App</th><th>Device</th><th>Last used</th><th></th></tr></thead>
+            <tbody>
+              {#each devices as d (d.id)}
+                <tr>
+                  <td class="small">{d.client_id === 'opnrelay-extension' ? 'Browser extension' : 'Desktop recorder'}</td>
+                  <td class="small">{d.device_name || '—'}</td>
+                  <td class="small">{when(d.last_used_at)}</td>
+                  <td><button class="small" onclick={() => disconnect(d.id)}>Disconnect</button></td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
