@@ -5,7 +5,7 @@
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -30,6 +30,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/sso/microsoft/callback", get(callback))
         .route("/admin/sso", get(get_settings).put(put_settings))
         .route("/admin/sso/groups/search", get(search_groups))
+        .route("/admin/sso/sync", post(sync_now))
 }
 
 async fn org_id(st: &AppState) -> ApiResult<Uuid> {
@@ -623,6 +624,23 @@ pub async fn sync_provider(st: &AppState, org: Uuid) -> ApiResult<microsoft::Pro
         ));
     }
     Ok(p)
+}
+
+#[derive(Deserialize, Default)]
+struct SyncRequest {
+    #[serde(default)]
+    confirm_brake: bool,
+}
+
+async fn sync_now(
+    State(st): State<AppState>,
+    CurrentUser(a): CurrentUser,
+    Json(req): Json<SyncRequest>,
+) -> ApiResult<Json<group_sync::RunSummary>> {
+    require_admin(&a)?;
+    sync_provider(&st, a.org_id).await?;
+    let sum = group_sync::sync_all(&st, &a.audit(), req.confirm_brake).await?;
+    Ok(Json(sum))
 }
 
 #[derive(Deserialize)]

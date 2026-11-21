@@ -125,6 +125,7 @@ async fn main() -> Result<()> {
             state.storage.ensure_root().await?;
             tokio::fs::create_dir_all(&cfg.backup_dir).await.ok();
             opnrelay_server::backup::spawn_scheduler(state.clone());
+            opnrelay_server::group_sync::spawn_scheduler(state.clone());
             let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
             tracing::info!(addr = %cfg.bind, url = %cfg.public_url, "OpnRelay listening");
             axum::serve(

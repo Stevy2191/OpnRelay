@@ -157,3 +157,231 @@ pub fn api_err(e: GraphError) -> ApiError {
         GraphError::Failed(m) => ApiError::bad(format!("Microsoft: {m}")),
     }
 }
+
+// ---- full sync ----
+
+use serde::Serialize;
+use time::OffsetDateTime;
+
+/// What one run of the full sync did.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct RunSummary {
+    pub groups: u32,
+    pub added: u32,
+    pub removed: u32,
+    pub roles_changed: u32,
+    pub disabled: u32,
+    pub missing: u32,
+    pub error: Option<String>,
+    pub brake: Option<u32>,
+}
+
+const SYNC_LOCK_KEY: i64 = 0x6f70_6e72;
+const FAILED_LOG_EVERY: time::Duration = time::Duration::hours(24);
+
+/// True when a run is due: never ran, or the last run is over an hour old.
+pub fn due(last: Option<OffsetDateTime>, now: OffsetDateTime) -> bool {
+    last.is_none_or(|l| l < now - time::Duration::hours(1))
+}
+
+/// The group is gone from Microsoft: empty it and remember since when.
+async fn mark_missing(
+    st: &AppState,
+    group_id: Uuid,
+    actor: &AuditActor,
+) -> Result<u32, GraphError> {
+    let mut tx = st.db.begin().await.map_err(db_err)?;
+    let removed: Vec<Uuid> =
+        sqlx::query_scalar("DELETE FROM group_members WHERE group_id = $1 RETURNING user_id")
+            .bind(group_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+    for uid in &removed {
+        audit::record(
+            &mut tx,
+            actor,
+            Event::new("group.member.removed")
+                .target("group", group_id)
+                .meta(json!({"user_id": uid, "source": "microsoft"})),
+        )
+        .await
+        .map_err(db_err)?;
+    }
+    let first: Option<String> = sqlx::query_scalar(
+        "UPDATE groups g SET missing_since = now(), last_synced_at = now()
+         FROM (SELECT id, missing_since AS was, name FROM groups WHERE id = $1 FOR UPDATE) o
+         WHERE g.id = o.id AND o.was IS NULL RETURNING o.name",
+    )
+    .bind(group_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(db_err)?;
+    if let Some(name) = first {
+        audit::record(
+            &mut tx,
+            actor,
+            Event::new("idp.group.missing")
+                .target("group", group_id)
+                .meta(json!({"name": name})),
+        )
+        .await
+        .map_err(db_err)?;
+    }
+    tx.commit().await.map_err(db_err)?;
+    Ok(removed.len() as u32)
+}
+
+/// Sync every linked group. Takes a database-wide lock so overlapping runs
+/// (scheduler, "Sync now", another instance) never interleave.
+pub async fn sync_all(
+    st: &AppState,
+    actor: &AuditActor,
+    _confirm_brake: bool,
+) -> anyhow::Result<RunSummary> {
+    let mut sum = RunSummary::default();
+    let Some(org): Option<Uuid> = sqlx::query_scalar("SELECT id FROM organizations LIMIT 1")
+        .fetch_optional(&st.db)
+        .await?
+    else {
+        return Ok(sum);
+    };
+    let Some(p) = crate::microsoft::load(st, &st.db, org)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?
+        .filter(|p| p.group_sync_enabled)
+    else {
+        return Ok(sum);
+    };
+
+    let mut lock = st.db.acquire().await?;
+    let got: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+        .bind(SYNC_LOCK_KEY)
+        .fetch_one(&mut *lock)
+        .await?;
+    if !got {
+        sum.error = Some("a sync is already running".into());
+        return Ok(sum);
+    }
+    let res = run_locked(st, org, &p, actor, &mut sum).await;
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(SYNC_LOCK_KEY)
+        .execute(&mut *lock)
+        .await;
+    res?;
+    Ok(sum)
+}
+
+async fn run_locked(
+    st: &AppState,
+    org: Uuid,
+    p: &Provider,
+    actor: &AuditActor,
+    sum: &mut RunSummary,
+) -> anyhow::Result<()> {
+    let (prev_error, logged_at): (Option<String>, Option<OffsetDateTime>) = sqlx::query_as(
+        "SELECT group_sync_last_error, group_sync_failed_logged_at
+         FROM identity_providers WHERE id = $1",
+    )
+    .bind(p.id)
+    .fetch_one(&st.db)
+    .await?;
+
+    let groups: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM groups WHERE org_id = $1 AND source = 'idp' ORDER BY name, id",
+    )
+    .bind(org)
+    .fetch_all(&st.db)
+    .await?;
+    for gid in groups {
+        sum.groups += 1;
+        let r = match sync_group(st, p, gid, actor).await {
+            Ok(c) => Ok((c.added, c.removed)),
+            Err(GraphError::NotFound) => {
+                sum.missing += 1;
+                mark_missing(st, gid, actor).await.map(|n| (0, n))
+            }
+            Err(e) => Err(e),
+        };
+        match r {
+            Ok((a, rm)) => {
+                sum.added += a;
+                sum.removed += rm;
+            }
+            Err(e) => {
+                sum.error = Some(match e {
+                    GraphError::Failed(m) => m,
+                    GraphError::NotFound => "group not found".into(),
+                });
+                break;
+            }
+        }
+    }
+
+    sqlx::query(
+        "UPDATE identity_providers SET group_sync_last_at = now(),
+            group_sync_last_ok_at = CASE WHEN $2::text IS NULL THEN now() ELSE group_sync_last_ok_at END,
+            group_sync_last_error = $2
+         WHERE id = $1",
+    )
+    .bind(p.id)
+    .bind(&sum.error)
+    .execute(&st.db)
+    .await?;
+
+    if let Some(err) = &sum.error {
+        let now = OffsetDateTime::now_utc();
+        let log = prev_error.is_none() || logged_at.is_none_or(|t| t < now - FAILED_LOG_EVERY);
+        if log {
+            let mut tx = st.db.begin().await?;
+            audit::record(
+                &mut tx,
+                actor,
+                Event::new("idp.sync.failed")
+                    .target("identity_provider", p.id)
+                    .meta(json!({"error": err})),
+            )
+            .await?;
+            sqlx::query(
+                "UPDATE identity_providers SET group_sync_failed_logged_at = now() WHERE id = $1",
+            )
+            .bind(p.id)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+        }
+    }
+    Ok(())
+}
+
+/// Hourly background sync, checked every five minutes.
+pub fn spawn_scheduler(st: AppState) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
+        loop {
+            tick.tick().await;
+            if let Err(e) = maybe_run(&st).await {
+                tracing::warn!(error = %e, "scheduled group sync failed");
+            }
+        }
+    });
+}
+
+async fn maybe_run(st: &AppState) -> anyhow::Result<()> {
+    let row: Option<(Option<OffsetDateTime>,)> = sqlx::query_as(
+        "SELECT group_sync_last_at FROM identity_providers WHERE group_sync_enabled LIMIT 1",
+    )
+    .fetch_optional(&st.db)
+    .await?;
+    if let Some((last,)) = row
+        && due(last, OffsetDateTime::now_utc())
+    {
+        let actor = AuditActor {
+            id: None,
+            label: "Microsoft sync".into(),
+            ip: None,
+        };
+        sync_all(st, &actor, false).await?;
+    }
+    Ok(())
+}

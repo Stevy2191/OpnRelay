@@ -558,3 +558,276 @@ async fn credential_change_drops_cached_token() {
     assert_eq!(fake.lock().unwrap().app_token_requests, 2);
     app.cleanup().await;
 }
+
+// ---- full sync ----
+
+use opnrelay_server::group_sync::due;
+use time::{Duration, OffsetDateTime};
+
+#[test]
+fn due_logic() {
+    let t = OffsetDateTime::now_utc();
+    assert!(due(None, t));
+    assert!(!due(Some(t - Duration::minutes(59)), t));
+    assert!(due(Some(t - Duration::minutes(61)), t));
+}
+
+async fn sync_now(owner: &Session) -> Value {
+    let r = owner.post("/admin/sso/sync", json!({})).await;
+    assert_eq!(r.status(), StatusCode::OK);
+    r.json().await.unwrap()
+}
+
+async fn link(owner: &Session, id: &str) -> String {
+    let g: Value = owner
+        .post("/admin/groups/link", json!({"external_id": id}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    g["id"].as_str().unwrap().to_string()
+}
+
+async fn member_count(app: &App, gid: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM group_members WHERE group_id = $1::uuid")
+        .bind(gid)
+        .fetch_one(&app.state().db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn removal_takes_effect_next_request() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base.clone()), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+
+    next_user(&fake, "oid-ann@acme.test", "ann@acme.test");
+    let b = browser();
+    microsoft_flow(&b, &format!("{}/api/v1/auth/sso/microsoft/start", app.base)).await;
+    fake.lock().unwrap().groups.insert(
+        HR.into(),
+        fg("HR Staff", "security", &["oid-ann@acme.test"], &[]),
+    );
+    let gid = link(&owner, HR).await;
+    let ws: Value = owner
+        .post("/workspaces", json!({"name": "HR"}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let ws_id = ws["id"].as_str().unwrap();
+    let r = owner
+        .put(
+            &format!("/workspaces/{ws_id}/members"),
+            json!({"members": [{"principal_type": "group", "principal_id": gid, "role": "viewer"}]}),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let guide: Value = owner
+        .post("/guides", json!({"workspace_id": ws_id, "title": "Policy"}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let guide_id = guide["id"].as_str().unwrap();
+    let get = |p: String| {
+        let b = b.clone();
+        let base = app.base.clone();
+        async move { b.get(format!("{base}/api/v1{p}")).send().await.unwrap() }
+    };
+    let list: Value = get("/workspaces".into()).await.json().await.unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["name"], "HR");
+    assert_eq!(get(format!("/guides/{guide_id}")).await.status(), 200);
+
+    fake.lock()
+        .unwrap()
+        .groups
+        .get_mut(HR)
+        .unwrap()
+        .members
+        .clear();
+    let s = sync_now(&owner).await;
+    assert_eq!(s["removed"], 1);
+    assert!(s["error"].is_null());
+
+    let list: Value = get("/workspaces".into()).await.json().await.unwrap();
+    assert!(list.as_array().unwrap().is_empty());
+    assert_eq!(
+        get(format!("/guides/{guide_id}")).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn nested_membership_counts() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    let u = sign_in(&app, &fake, "oid-nel@acme.test", "nel@acme.test").await;
+    {
+        let mut f = fake.lock().unwrap();
+        f.groups
+            .insert(GG.into(), fg("Medics", "security", &[], &[GN]));
+        f.groups.insert(
+            GN.into(),
+            fg("Nested", "security", &["oid-nel@acme.test"], &[]),
+        );
+    }
+    let gid = link(&owner, GG).await;
+    let g: Value = owner.get("/admin/groups").await.json().await.unwrap();
+    let g = g
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == gid)
+        .unwrap();
+    assert_eq!(g["member_ids"], json!([u]));
+    let s = sync_now(&owner).await;
+    assert_eq!(
+        (s["added"].as_u64(), s["removed"].as_u64()),
+        (Some(0), Some(0))
+    );
+    assert_eq!(member_count(&app, &gid).await, 1);
+    app.cleanup().await;
+}
+
+async fn audit_count(app: &App) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM audit_events")
+        .fetch_one(&app.state().db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn graph_failure_changes_nothing() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    sign_in(&app, &fake, "oid-ann@acme.test", "ann@acme.test").await;
+    fake.lock().unwrap().groups.insert(
+        HR.into(),
+        fg("HR Staff", "security", &["oid-ann@acme.test"], &[]),
+    );
+    let gid = link(&owner, HR).await;
+    assert_eq!(member_count(&app, &gid).await, 1);
+
+    fake.lock().unwrap().graph_fail = true;
+    let s = sync_now(&owner).await;
+    assert!(s["error"].is_string());
+    assert_eq!(member_count(&app, &gid).await, 1);
+    let st: Value = owner.get("/admin/sso").await.json().await.unwrap();
+    assert!(st["group_sync_last_error"].is_string());
+    assert!(st["group_sync_last_at"].is_string());
+    assert!(st["group_sync_last_ok_at"].is_null());
+    assert_eq!(actions(&owner, "idp.sync.failed").await.len(), 1);
+
+    let s = sync_now(&owner).await;
+    assert!(s["error"].is_string());
+    assert_eq!(actions(&owner, "idp.sync.failed").await.len(), 1);
+
+    // Recovery clears the error and records the success.
+    fake.lock().unwrap().graph_fail = false;
+    let s = sync_now(&owner).await;
+    assert!(s["error"].is_null());
+    let st: Value = owner.get("/admin/sso").await.json().await.unwrap();
+    assert!(st["group_sync_last_error"].is_null());
+    assert!(st["group_sync_last_ok_at"].is_string());
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn deleted_group_emptied() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    sign_in(&app, &fake, "oid-ann@acme.test", "ann@acme.test").await;
+    fake.lock().unwrap().groups.insert(
+        HR.into(),
+        fg("HR Staff", "security", &["oid-ann@acme.test"], &[]),
+    );
+    let gid = link(&owner, HR).await;
+    fake.lock().unwrap().deleted_groups.insert(HR.into());
+    let s = sync_now(&owner).await;
+    assert_eq!(s["missing"], 1);
+    assert!(s["error"].is_null());
+    let missing: bool =
+        sqlx::query_scalar("SELECT missing_since IS NOT NULL FROM groups WHERE id = $1::uuid")
+            .bind(&gid)
+            .fetch_one(&app.state().db)
+            .await
+            .unwrap();
+    assert!(missing);
+    assert_eq!(member_count(&app, &gid).await, 0);
+    // Audited once only.
+    sync_now(&owner).await;
+    assert_eq!(actions(&owner, "idp.group.missing").await.len(), 1);
+
+    // It comes back.
+    fake.lock().unwrap().deleted_groups.remove(HR);
+    let s = sync_now(&owner).await;
+    assert_eq!(
+        (s["missing"].as_u64(), s["added"].as_u64()),
+        (Some(0), Some(1))
+    );
+    let missing: bool =
+        sqlx::query_scalar("SELECT missing_since IS NOT NULL FROM groups WHERE id = $1::uuid")
+            .bind(&gid)
+            .fetch_one(&app.state().db)
+            .await
+            .unwrap();
+    assert!(!missing);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn noop_sync_writes_no_audit() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    sign_in(&app, &fake, "oid-ann@acme.test", "ann@acme.test").await;
+    fake.lock().unwrap().groups.insert(
+        HR.into(),
+        fg("HR Staff", "security", &["oid-ann@acme.test"], &[]),
+    );
+    link(&owner, HR).await;
+    let before = audit_count(&app).await;
+    sync_now(&owner).await;
+    sync_now(&owner).await;
+    assert_eq!(audit_count(&app).await, before);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn sync_off_freezes() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    sign_in(&app, &fake, "oid-ann@acme.test", "ann@acme.test").await;
+    fake.lock().unwrap().groups.insert(
+        HR.into(),
+        fg("HR Staff", "security", &["oid-ann@acme.test"], &[]),
+    );
+    let gid = link(&owner, HR).await;
+    assert_eq!(sso(&owner, TENANT, false).await.status(), 204);
+    fake.lock()
+        .unwrap()
+        .groups
+        .get_mut(HR)
+        .unwrap()
+        .members
+        .clear();
+    let r = owner.post("/admin/sso/sync", json!({})).await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert!(r.text().await.unwrap().contains("Group sync is off"));
+    assert_eq!(member_count(&app, &gid).await, 1);
+    app.cleanup().await;
+}
