@@ -1219,6 +1219,13 @@ async fn role_preview_counts() {
     );
     let gid = link(&owner, IT).await;
     let before = audit_count(&app).await;
+    let seq = || async {
+        sqlx::query_scalar::<_, i64>("SELECT last_value FROM audit_events_seq_seq")
+            .fetch_one(&app.state().db)
+            .await
+            .unwrap()
+    };
+    let seq_before = seq().await;
 
     let r = owner
         .get(&format!(
@@ -1230,6 +1237,7 @@ async fn role_preview_counts() {
     assert_eq!(v["changes"], 2);
 
     assert_eq!(audit_count(&app).await, before);
+    assert_eq!(seq().await, seq_before);
     for (id, role) in [(&a, "member"), (&b, "member"), (&c, "admin")] {
         let u = admin_user(&owner, id).await;
         assert_eq!(
@@ -1286,5 +1294,159 @@ async fn sign_in_removes_lost_membership() {
         actions(&owner, "group.member.removed").await,
         vec!["group.member.removed"]
     );
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn owner_recovered_via_bootstrap_is_manual() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    let ann = sign_in(
+        &app,
+        &fake,
+        "00000000-0000-0000-0000-0000000000f1",
+        "ann@acme.test",
+    )
+    .await;
+    fake.lock().unwrap().groups.insert(
+        IT.into(),
+        fg(
+            "IT Admins",
+            "security",
+            &["00000000-0000-0000-0000-0000000000f1"],
+            &[],
+        ),
+    );
+    let gid = link(&owner, IT).await;
+    grant(&owner, &gid, json!("admin")).await;
+    assert_eq!(admin_user(&owner, &ann).await["role_source"], "idp");
+
+    opnrelay_server::bootstrap::create_owner(
+        &app.state().db,
+        &app.base,
+        "Acme",
+        "ann@acme.test",
+        "Ann",
+    )
+    .await
+    .unwrap();
+    let u = admin_user(&owner, &ann).await;
+    assert_eq!(
+        (
+            u["org_role"].as_str().unwrap(),
+            u["role_source"].as_str().unwrap()
+        ),
+        ("owner", "manual")
+    );
+    sync_now(&owner).await;
+    assert_eq!(admin_user(&owner, &ann).await["role_source"], "manual");
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn jit_user_gets_mapped_role_during_graph_outage() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    let r = owner
+        .put(
+            "/admin/sso",
+            json!({"enabled": true, "tenant_id": TENANT, "client_id": CLIENT, "client_secret": "s3cret",
+                "jit_provisioning": true, "default_role": "auditor", "sso_only": false,
+                "group_sync_enabled": true}),
+        )
+        .await;
+    assert_eq!(r.status(), 204);
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(IT.into(), fg("IT Admins", "security", &[], &[]));
+    let gid = link(&owner, IT).await;
+    grant(&owner, &gid, json!("admin")).await;
+
+    fake.lock().unwrap().graph_fail = true;
+    let u = sign_in(
+        &app,
+        &fake,
+        "00000000-0000-0000-0000-0000000000f2",
+        "new@acme.test",
+    )
+    .await;
+    let u = admin_user(&owner, &u).await;
+    assert_eq!(
+        (
+            u["org_role"].as_str().unwrap(),
+            u["role_source"].as_str().unwrap()
+        ),
+        ("member", "idp")
+    );
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn re_enabled_user_loses_stale_role() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    let oid = "00000000-0000-0000-0000-0000000000f3";
+    let ann = sign_in(&app, &fake, oid, "ann@acme.test").await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(IT.into(), fg("IT Admins", "security", &[oid], &[]));
+    let gid = link(&owner, IT).await;
+    grant(&owner, &gid, json!("admin")).await;
+    assert_eq!(admin_user(&owner, &ann).await["org_role"], "admin");
+
+    let r = owner
+        .patch(
+            &format!("/admin/users/{ann}"),
+            json!({"status": "disabled"}),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    set_members(&fake, IT, &[]);
+    sync_now(&owner).await;
+    assert_eq!(admin_user(&owner, &ann).await["org_role"], "admin");
+
+    let r = owner
+        .patch(&format!("/admin/users/{ann}"), json!({"status": "active"}))
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(admin_user(&owner, &ann).await["org_role"], "member");
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn same_role_patch_on_managed_user_is_allowed() {
+    let (base, fake) = fake_microsoft().await;
+    let app = App::spawn_with(Some(base), None).await;
+    let owner = app.owner().await;
+    assert_eq!(sso(&owner, TENANT, true).await.status(), 204);
+    let oid = "00000000-0000-0000-0000-0000000000f4";
+    let ann = sign_in(&app, &fake, oid, "ann@acme.test").await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(IT.into(), fg("IT Admins", "security", &[oid], &[]));
+    let gid = link(&owner, IT).await;
+    grant(&owner, &gid, json!("admin")).await;
+    let r = owner
+        .patch(
+            &format!("/admin/users/{ann}"),
+            json!({"org_role": "admin", "display_name": "Ann A"}),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let r = owner
+        .patch(
+            &format!("/admin/users/{ann}"),
+            json!({"org_role": "member"}),
+        )
+        .await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
     app.cleanup().await;
 }

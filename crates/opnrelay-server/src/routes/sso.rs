@@ -283,6 +283,10 @@ async fn handle_callback(
             crate::group_sync::sync_user(st, &provider, user_id, &identity.subject).await
     {
         tracing::warn!(error = ?e, "group sync at sign-in failed");
+        // Roles need no Graph call: still apply the mapping to this person.
+        if let Err(e) = crate::group_sync::recompute_user(st, user_id).await {
+            tracing::warn!(error = ?e, "role recompute at sign-in failed");
+        }
     }
     let (token, lifetime) =
         auth::create_session(st, user_id, false, client.ip, client.user_agent.as_deref()).await?;

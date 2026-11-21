@@ -117,6 +117,17 @@ fn chain_hash(prev: &[u8], canonical: &[u8]) -> Vec<u8> {
 
 /// Append an event. **Must** be called inside a transaction (the advisory
 /// lock is transaction scoped).
+/// Take the audit chain lock (held to the end of the transaction). Code that
+/// both locks rows it will audit about and records audit events takes this
+/// first, so every path acquires locks in the same order: audit chain, then rows.
+pub async fn lock(conn: &mut PgConnection) -> sqlx::Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(AUDIT_LOCK_KEY)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 pub async fn record(
     conn: &mut PgConnection,
     actor: &AuditActor,

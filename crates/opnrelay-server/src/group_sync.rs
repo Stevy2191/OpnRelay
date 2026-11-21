@@ -241,16 +241,84 @@ pub async fn sync_user(
     Ok(())
 }
 
+/// The role each Microsoft-linked, non-owner, non-disabled user should have, as
+/// `(user, current, wanted)`. `over` pretends one group has a different
+/// `grants_role` (for previews). `lock` takes row locks on the users.
+async fn role_targets(
+    tx: &mut PgConnection,
+    org: Uuid,
+    only_user: Option<Uuid>,
+    over: Option<(Uuid, Option<&str>)>,
+    lock: bool,
+) -> sqlx::Result<Vec<(Uuid, String, String)>> {
+    let (og, ov) = (over.map(|o| o.0), over.and_then(|o| o.1));
+    let has_over = over.is_some();
+    // grants_role of group g, with the override applied.
+    let eff = "CASE WHEN $4 AND g.id = $2 THEN $3 ELSE g.grants_role END";
+    let any: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS (SELECT 1 FROM groups g
+                        WHERE g.org_id = $1 AND g.source = 'idp' AND {eff} IS NOT NULL)"
+    ))
+    .bind(org)
+    .bind(og)
+    .bind(ov)
+    .bind(has_over)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !any {
+        return Ok(Vec::new());
+    }
+    sqlx::query_as(&format!(
+        "SELECT u.id, u.org_role, r.role
+         FROM users u
+         CROSS JOIN LATERAL (
+             SELECT CASE WHEN bool_or(({eff}) = 'admin') THEN 'admin'
+                         WHEN bool_or(({eff}) = 'auditor') THEN 'auditor'
+                         ELSE 'member' END AS role
+             FROM group_members gm JOIN groups g ON g.id = gm.group_id
+             WHERE gm.user_id = u.id AND g.org_id = u.org_id AND g.source = 'idp'
+         ) r
+         WHERE u.org_id = $1 AND u.deleted_at IS NULL AND u.org_role <> 'owner'
+           AND u.status <> 'disabled' AND ($5::uuid IS NULL OR u.id = $5)
+           AND EXISTS (SELECT 1 FROM user_identities i
+                       JOIN identity_providers ip ON ip.id = i.idp_id
+                       WHERE i.user_id = u.id AND ip.org_id = u.org_id)
+         ORDER BY u.id {}",
+        if lock { "FOR UPDATE OF u" } else { "" }
+    ))
+    .bind(org)
+    .bind(og)
+    .bind(ov)
+    .bind(has_over)
+    .bind(only_user)
+    .fetch_all(&mut *tx)
+    .await
+}
+
 /// Put roles in line with the linked groups' `grants_role`. Returns how many
 /// roles changed. Only Microsoft-linked, non-owner, non-disabled users are touched.
 /// With no role-granting group left, managed users go back to manual and keep
 /// their role. `only_user` limits the work to one person (sign-in).
+///
+/// Lock order: takes the audit chain lock first, then user rows, the same order
+/// as every other path that audits about users (see `audit::lock`).
 pub async fn recompute_roles(
     tx: &mut PgConnection,
     org: Uuid,
     only_user: Option<Uuid>,
     actor: &AuditActor,
 ) -> sqlx::Result<u32> {
+    audit::lock(tx).await?;
+    // Owners are never managed.
+    sqlx::query(
+        "UPDATE users SET role_source = 'manual'
+         WHERE org_id = $1 AND org_role = 'owner' AND role_source = 'idp'
+           AND ($2::uuid IS NULL OR id = $2)",
+    )
+    .bind(org)
+    .bind(only_user)
+    .execute(&mut *tx)
+    .await?;
     let any: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM groups
                         WHERE org_id = $1 AND source = 'idp' AND grants_role IS NOT NULL)",
@@ -269,29 +337,7 @@ pub async fn recompute_roles(
         .await?;
         return Ok(0);
     }
-    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
-        "SELECT u.id, u.org_role, r.role
-         FROM users u
-         CROSS JOIN LATERAL (
-             SELECT CASE WHEN bool_or(g.grants_role = 'admin') THEN 'admin'
-                         WHEN bool_or(g.grants_role = 'auditor') THEN 'auditor'
-                         ELSE 'member' END AS role
-             FROM group_members gm JOIN groups g ON g.id = gm.group_id
-             WHERE gm.user_id = u.id AND g.org_id = u.org_id
-               AND g.source = 'idp' AND g.grants_role IS NOT NULL
-         ) r
-         WHERE u.org_id = $1 AND u.deleted_at IS NULL AND u.org_role <> 'owner'
-           AND u.status <> 'disabled' AND ($2::uuid IS NULL OR u.id = $2)
-           AND EXISTS (SELECT 1 FROM user_identities i
-                       JOIN identity_providers ip ON ip.id = i.idp_id
-                       WHERE i.user_id = u.id AND ip.org_id = u.org_id)
-         ORDER BY u.id
-         FOR UPDATE OF u",
-    )
-    .bind(org)
-    .bind(only_user)
-    .fetch_all(&mut *tx)
-    .await?;
+    let rows = role_targets(tx, org, only_user, None, true).await?;
     let mut changed = 0;
     for (id, from, to) in rows {
         sqlx::query("UPDATE users SET role_source = 'idp', org_role = $2 WHERE id = $1")
@@ -312,6 +358,41 @@ pub async fn recompute_roles(
         }
     }
     Ok(changed)
+}
+
+/// How many people would change role if group `group` had `grants_role`.
+/// Read-only: no locks, no writes, no audit events.
+pub async fn preview_role_changes(
+    db: &mut PgConnection,
+    org: Uuid,
+    group: Uuid,
+    grants_role: Option<&str>,
+) -> sqlx::Result<u32> {
+    let rows = role_targets(db, org, None, Some((group, grants_role)), false).await?;
+    Ok(rows.iter().filter(|(_, from, to)| from != to).count() as u32)
+}
+
+/// Recompute one person's role in its own transaction. Needs no Graph call, so
+/// sign-in can still apply the mapping when Microsoft cannot be reached.
+pub async fn recompute_user(st: &AppState, user_id: Uuid) -> sqlx::Result<u32> {
+    let row: Option<(String, Uuid)> = sqlx::query_as(
+        "SELECT email::text, org_id FROM users WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_optional(&st.db)
+    .await?;
+    let Some((email, org)) = row else {
+        return Ok(0);
+    };
+    let actor = AuditActor {
+        id: Some(user_id),
+        label: email,
+        ip: None,
+    };
+    let mut tx = st.db.begin().await?;
+    let n = recompute_roles(&mut tx, org, Some(user_id), &actor).await?;
+    tx.commit().await?;
+    Ok(n)
 }
 
 /// How a Graph failure is shown to an administrator.

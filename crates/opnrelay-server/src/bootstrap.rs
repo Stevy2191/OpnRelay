@@ -68,7 +68,7 @@ pub async fn create_owner(
     let mut tx = db.begin().await?;
     let user_id = match exists {
         Some(id) => {
-            sqlx::query("UPDATE users SET org_role = 'owner', deleted_at = NULL WHERE id = $1")
+            sqlx::query("UPDATE users SET org_role = 'owner', role_source = 'manual', deleted_at = NULL WHERE id = $1")
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;

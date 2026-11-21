@@ -225,6 +225,8 @@ async fn update_user(
         return Err(ApiError::Forbidden("only an owner can change an owner"));
     }
     let mut tx = st.db.begin().await?;
+    // Audit chain lock before any user row, like every role-changing path.
+    audit::lock(&mut tx).await?;
     let mut changes = serde_json::Map::new();
     if let Some(n) = &req.display_name {
         let n = util::name("display_name", n, 100)?;
@@ -237,7 +239,7 @@ async fn update_user(
     }
     if let Some(r) = &req.org_role {
         let role = OrgRole::parse(r).ok_or_else(|| ApiError::bad("invalid org_role"))?;
-        if target.role_source == "idp" {
+        if target.role_source == "idp" && r != &target.org_role {
             return Err(ApiError::bad(
                 "This person's role is set by a Microsoft group",
             ));
@@ -275,6 +277,10 @@ async fn update_user(
                 .await?;
         }
         changes.insert("status".into(), json!(s));
+        if s == "active" {
+            // A re-enabled person must not keep a role the groups no longer give.
+            group_sync::recompute_roles(&mut tx, a.org_id, Some(id), &a.audit()).await?;
+        }
     }
     if count_owners(&mut tx, a.org_id).await? == 0 {
         return Err(ApiError::bad(
@@ -541,6 +547,7 @@ async fn delete_group(
 ) -> ApiResult<StatusCode> {
     require_admin(&a)?;
     let mut tx = st.db.begin().await?;
+    audit::lock(&mut tx).await?;
     let gone: Option<(String, String, Option<String>)> = sqlx::query_as(
         "DELETE FROM groups WHERE id = $1 AND org_id = $2 RETURNING source, name, external_id",
     )
@@ -730,6 +737,8 @@ async fn update_group_role(
     require_admin(&a)?;
     check_grants(&req.grants_role)?;
     let mut tx = st.db.begin().await?;
+    // Audit chain lock first: syncs audit and then touch group rows.
+    audit::lock(&mut tx).await?;
     let cur: Option<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT source, name, grants_role FROM groups WHERE id = $1 AND org_id = $2 FOR UPDATE",
     )
@@ -770,7 +779,7 @@ async fn update_group_role(
 }
 
 /// How many people would change role if this group's `grants_role` were set.
-/// Runs the real recomputation inside a transaction that is always rolled back.
+/// Read-only: no locks, no writes, no audit events.
 async fn role_preview(
     State(st): State<AppState>,
     CurrentUser(a): CurrentUser,
@@ -779,24 +788,19 @@ async fn role_preview(
 ) -> ApiResult<Json<Value>> {
     require_admin(&a)?;
     check_grants(&q.grants_role)?;
-    let mut tx = st.db.begin().await?;
+    let mut conn = st.db.acquire().await?;
     let source: Option<String> =
         sqlx::query_scalar("SELECT source FROM groups WHERE id = $1 AND org_id = $2")
             .bind(id)
             .bind(a.org_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut *conn)
             .await?;
     match source.as_deref() {
         None => return Err(ApiError::NotFound),
         Some("idp") => {}
         Some(_) => return Err(ApiError::bad("Only Microsoft groups can grant roles")),
     }
-    sqlx::query("UPDATE groups SET grants_role = $2 WHERE id = $1")
-        .bind(id)
-        .bind(&q.grants_role)
-        .execute(&mut *tx)
-        .await?;
-    let changes = group_sync::recompute_roles(&mut tx, a.org_id, None, &a.audit()).await;
-    tx.rollback().await?;
-    Ok(Json(json!({ "changes": changes? })))
+    let changes =
+        group_sync::preview_role_changes(&mut conn, a.org_id, id, q.grants_role.as_deref()).await?;
+    Ok(Json(json!({ "changes": changes })))
 }
