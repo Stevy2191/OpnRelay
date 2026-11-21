@@ -16,6 +16,8 @@ FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates crates
+# Workspace member manifests (not built into the server image).
+COPY apps/desktop apps/desktop
 COPY --from=web /src/apps/web/dist apps/web/dist
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \

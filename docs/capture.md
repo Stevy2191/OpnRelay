@@ -39,31 +39,43 @@ The user picks these options per recording. Nothing is locked per department.
 - Exclusion list (apps by bundle ID/exe name, sites by host); captures are suppressed while they are focused. The default list includes common password managers.
 - Nothing is uploaded until the user stops and confirms.
 
-## 2. Desktop app (Tauri 2)
+## 2. Desktop recorder (`apps/desktop`)
 
-### Platform matrix
+A small native window (Rust + egui, see [ADR 0001](adr/0001-tauri-desktop.md)) plus a
+command line (`opnrelay-recorder login|record`) for scripting and IT testing.
 
-| Capability | Windows 10/11 | macOS 13+ | Linux X11 | Linux Wayland |
-|---|---|---|---|---|
-| Global mouse/key events | `SetWindowsHookEx` (LL hooks) | `CGEventTap` (needs Accessibility permission) | XInput2 / XRecord | **Not available** to apps by design (see below) |
-| Screenshots | Windows Graphics Capture / DXGI | ScreenCaptureKit (needs Screen Recording permission) | XShm / XGetImage | xdg-desktop-portal Screenshot / ScreenCast + PipeWire |
-| Element labels | UI Automation | AXUIElement | AT-SPI2 | AT-SPI2 |
-| Video encode | Media Foundation (H.264, HW accel) | AVFoundation / VideoToolbox | GStreamer (x264/VA-API) | GStreamer via PipeWire |
+### How it works (v1)
+| Concern | Implementation |
+|---|---|
+| Clicks, double-clicks, right-clicks, shortcuts | Polling the mouse/keyboard state every 8 ms (`device_query`). No global hooks and **no keystroke logging**: typing becomes one "Type in …" step when the user pauses, clicks, or presses Enter/Tab. |
+| Screenshots | `xcap`: the monitor under the pointer, cropped to the area around the click (1000×640 points, HiDPI-aware), the active window, or the full screen. |
+| Step titles | Desktop apps don't expose element names without accessibility APIs, so titles use the window: *Click in "Payroll – Employee record"*. The highlight box is drawn around the click point. |
+| Privacy | The recorder's own window and common password managers are never recorded. Pause, undo last step, discard. |
+| Sign-in | System browser + OAuth/PKCE loopback redirect; refresh token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service), with a user-only file as fallback. |
+| Upload | On finish: creates a draft guide, uploads screenshots, opens the editor in the browser. Failed uploads keep the steps for retry. |
 
-**Wayland limitation:** Wayland does not allow global input monitoring. Options are:
-(a) ScreenCast portal video plus **manual step marking** via a hotkey registered through the
-GlobalShortcuts portal (where the compositor supports it); (b) AT-SPI focus/activation
-events as a best-effort click signal (works in GTK/Qt apps); (c) run the app under
-XWayland. This must be documented clearly to Linux users.
+### Platform notes
+- **Windows 10/11:** works without extra permissions.
+- **macOS:** the user must allow **Screen Recording** and **Accessibility** for OpnRelay
+  Recorder in System Settings → Privacy & Security (first run).
+- **Linux:** X11 sessions are supported. Wayland does not allow apps to observe global
+  input or take screenshots freely, so record under an X11 session or use the browser
+  extension for web apps.
 
-### Implementation notes
-- `opnrelay-capture` exposes a trait-based API: `InputSource`, `FrameSource`, `ElementInspector`, `VideoEncoder`, with one implementation per OS behind `cfg(target_os)`. Candidate crates: `windows` (official bindings), `objc2` / `screencapturekit`, `x11rb`, `ashpd` (portals), `atspi`, `gstreamer`.
-- FFI is kept in small `unsafe`-allowed modules with safety comments; everything else is `forbid(unsafe_code)`.
-- Screenshots are kept as PNG (lossless UI text) in memory, then WebP lossless or PNG on upload; the server re-encodes.
-- HiDPI: frames are captured at native resolution and coordinates stored in physical pixels + scale factor.
-- **Local draft store:** SQLCipher database in the app data dir; the key is in the OS keychain (`keyring` crate: Windows Credential Manager, macOS Keychain, Secret Service on Linux).
-- **Offline:** drafts persist; the upload queue retries with backoff; uploads are resumable.
-- **Distribution:** MSI/NSIS (Windows), DMG (macOS, universal binary), AppImage + .deb + .rpm (Linux; Flatpak later). No paid code-signing certificates; see [ADR 0007](adr/0007-no-paid-code-signing.md) and [deployment.md §8](deployment.md#8-client-rollout). Enterprise deployment: MSI supports silent install with a preconfigured server URL (`OPNRELAY_SERVER_URL` property / config file); macOS supports a `.mobileconfig`-delivered setting.
+### Planned
+- Element labels via UI Automation (Windows), AXUIElement (macOS), AT-SPI (Linux).
+- Global hotkeys for pause/stop, tray icon, encrypted local drafts.
+- Optional on-device OCR to redact text in desktop screenshots (today: manual redaction in
+  the editor).
+- Video recording (M7). Installers: MSI, DMG, AppImage/deb/rpm with free signing (ADR 0007).
+
+## 3. Browser extension (`apps/extension`)
+
+### Targets
+- Chrome, Edge (Chromium MV3) and Firefox (MV3). One TypeScript codebase built with
+  esbuild into `dist/chromium` and `dist/firefox` (~21 KB).
+- Distributed through the Chrome Web Store / Edge Add-ons / Firefox AMO **or** as
+  self-hosted packages force-installed by policy.
 
 ### Permissions
 - Required: `activeTab`, `scripting`, `storage`, `identity`.
@@ -71,7 +83,6 @@ XWayland. This must be documented clearly to Linux users.
   configured) and to web pages (when the first recording starts). Page access is what lets
   a recording continue across pages and sites.
 - Content scripts are injected **only into the tab being recorded**, only while recording.
-  There are no permanent content scripts.
 
 ### Sign-in
 `identity.launchWebAuthFlow` opens the server's `#/connect` consent page (OAuth 2.0
@@ -80,8 +91,7 @@ kept in extension storage; the short-lived access token only in session storage.
 
 ### Enterprise install
 - **Chrome / Edge:** force-install with the `ExtensionInstallForcelist` policy and set the
-  server with managed storage (`3rdparty.extensions.<id>.serverUrl`, schema in
-  `apps/extension/static/managed-schema.json`).
+  server with managed storage (schema in `apps/extension/static/managed-schema.json`).
 - **Firefox:** `policies.json` → `ExtensionSettings` (force install) and `3rdparty` →
   `Extensions` → `recorder@opnrelay.dev` → `serverUrl`.
 
@@ -91,8 +101,8 @@ kept in extension storage; the short-lived access token only in session storage.
 - Label resolution order: `aria-label` → `aria-labelledby` → `<label for>` → button/link text → `title` → `placeholder` → `name` → role + nearest heading.
 - Before the screenshot: the content script draws redaction overlays on sensitive elements (DOM-level masking), then asks the service worker to `captureVisibleTab`, then removes the overlays. Unredacted pixels are never captured.
 - "Area around each click" crops a 1000×640 CSS-pixel region around the click; "whole page view" keeps the visible tab. Coordinates are scaled to the real screenshot size.
-- Video in the extension uses `chrome.tabCapture` / `getDisplayMedia` with MediaRecorder (WebM). Firefox uses `getDisplayMedia` with a user prompt.
-- Cross-origin iframes: labels are unavailable without `all_frames` injection. Phase 1 captures the click and screenshot with a generic label; phase 2 adds opt-in frame injection.
+- *Planned (M7):* video in the extension via `chrome.tabCapture` / `getDisplayMedia` with MediaRecorder (WebM). Firefox uses `getDisplayMedia` with a user prompt.
+- Cross-origin iframes: the click and screenshot are captured, but labels inside the frame are not available yet (opt-in frame injection is planned).
 
 ## 4. Video & GIF
 

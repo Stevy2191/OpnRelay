@@ -23,6 +23,15 @@ fn label(action: &Action) -> Option<String> {
     action.target_label.as_deref().and_then(clean)
 }
 
+/// Where the action happened when no element label is known (desktop apps).
+fn place(action: &Action) -> Option<String> {
+    action
+        .window_title
+        .as_deref()
+        .and_then(clean)
+        .or_else(|| action.app.as_deref().and_then(clean))
+}
+
 /// Strips scheme, query and fragment from a URL for display: `host/path`.
 pub fn display_url(url: &str) -> String {
     let without_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
@@ -35,17 +44,20 @@ pub fn display_url(url: &str) -> String {
 /// Generate an English title for an action (e.g. `Click "Save"`).
 pub fn generate(action: &Action) -> String {
     match action.action_type {
-        ActionType::Click => match label(action) {
-            Some(l) => format!("Click \"{l}\""),
-            None => "Click here".to_string(),
+        ActionType::Click => match (label(action), place(action)) {
+            (Some(l), _) => format!("Click \"{l}\""),
+            (None, Some(p)) => format!("Click in \"{p}\""),
+            (None, None) => "Click here".to_string(),
         },
-        ActionType::DoubleClick => match label(action) {
-            Some(l) => format!("Double-click \"{l}\""),
-            None => "Double-click here".to_string(),
+        ActionType::DoubleClick => match (label(action), place(action)) {
+            (Some(l), _) => format!("Double-click \"{l}\""),
+            (None, Some(p)) => format!("Double-click in \"{p}\""),
+            (None, None) => "Double-click here".to_string(),
         },
-        ActionType::RightClick => match label(action) {
-            Some(l) => format!("Right-click \"{l}\""),
-            None => "Right-click here".to_string(),
+        ActionType::RightClick => match (label(action), place(action)) {
+            (Some(l), _) => format!("Right-click \"{l}\""),
+            (None, Some(p)) => format!("Right-click in \"{p}\""),
+            (None, None) => "Right-click here".to_string(),
         },
         ActionType::Type => {
             let text = action.typed_text.as_deref().and_then(clean);
@@ -53,7 +65,10 @@ pub fn generate(action: &Action) -> String {
                 (Some(t), Some(l)) => format!("Type \"{t}\" in \"{l}\""),
                 (None, Some(l)) => format!("Type in \"{l}\""),
                 (Some(t), None) => format!("Type \"{t}\""),
-                (None, None) => "Type text".to_string(),
+                (None, None) => match place(action) {
+                    Some(p) => format!("Type in \"{p}\""),
+                    None => "Type text".to_string(),
+                },
             }
         }
         ActionType::KeyShortcut => match action.keys.as_deref().and_then(clean) {
@@ -99,6 +114,16 @@ mod tests {
         assert_eq!(generate(&a), "Click here");
         a.target_label = Some("  Save \n changes ".into());
         assert_eq!(generate(&a), "Click \"Save changes\"");
+    }
+
+    #[test]
+    fn desktop_titles_fall_back_to_window() {
+        let mut a = act(ActionType::Click);
+        a.window_title = Some("Payroll – Employee record".into());
+        assert_eq!(generate(&a), "Click in \"Payroll – Employee record\"");
+        let mut t = act(ActionType::Type);
+        t.app = Some("Notepad".into());
+        assert_eq!(generate(&t), "Type in \"Notepad\"");
     }
 
     #[test]

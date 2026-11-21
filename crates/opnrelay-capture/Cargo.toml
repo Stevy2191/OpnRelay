@@ -7,6 +7,12 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+device_query = "4.0.1"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+opnrelay-core = { version = "0.1.0", path = "../opnrelay-core" }
+thiserror = "2.0.21"
+uuid = { version = "1.29.3", features = ["v7"] }
+xcap = "0.9.10"
 
 [lints]
 workspace = true

@@ -48,6 +48,10 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.9
+# Fonts bundled by egui in the desktop recorder (font licences, fine to distribute).
+exceptions = [
+    { name = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
+]
 
 [bans]
 multiple-versions = "allow"

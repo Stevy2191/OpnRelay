@@ -35,6 +35,8 @@ jobs:
       OPNRELAY_TEST_DATABASE_URL: postgres://opnrelay:opnrelay@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
+      - name: Native libraries for the desktop recorder
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxrandr-dev libxtst-dev libxdo-dev libdbus-1-dev libpipewire-0.3-dev libxkbcommon-dev libegl-dev libgbm-dev clang libclang-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -61,6 +63,27 @@ jobs:
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
+
+  desktop:
+    name: Desktop recorder (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked -p opnrelay-capture -p opnrelay-client
+      - run: cargo build --release --locked -p opnrelay-recorder
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opnrelay-recorder-${{ matrix.os }}
+          path: |
+            target/release/opnrelay-recorder
+            target/release/opnrelay-recorder.exe
+          if-no-files-found: ignore
 
   extension:
     name: Browser extension (type check, tests, build)

@@ -19,12 +19,14 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 - [x] Web UI: login, invites, workspaces/folders, guide viewer, editor (steps, screenshots via upload/paste, highlights), admin, audit log, account/MFA
 - **Demo:** create a guide by uploading screenshots manually; view it in the browser.
 
-## M2: Desktop recorder (Windows + macOS first)
-- [ ] `opnrelay-capture`: input hooks, screenshots (full/window/region), element labels
-- [ ] Step generation and title templates
-- [ ] OAuth PKCE sign-in, keychain storage, encrypted local drafts
-- [ ] Resumable upload → draft guide
-- [ ] Auto-redaction (structural + patterns)
+## M2: Desktop recorder
+- [x] `opnrelay-capture`: input observation, screenshots (region/window/full), step generation and titles
+- [x] Recorder window (egui) + CLI; OAuth PKCE sign-in with loopback redirect, keychain storage
+- [x] Upload as a draft guide, retry on failure; pause / undo / discard; own window and password managers excluded
+- [ ] Element labels via platform accessibility APIs
+- [ ] Encrypted local drafts, global hotkeys, tray icon
+- [ ] Desktop auto-redaction (on-device OCR)
+- [ ] Installers (MSI, DMG, AppImage/deb/rpm)
 - **Demo:** record a workflow on Windows/macOS and get a guide on the server.
 
 ## M3: Exports & branding

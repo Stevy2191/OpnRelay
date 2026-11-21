@@ -10,8 +10,9 @@ third-party cloud, no data leaving your network.
 > Status: **early development**. Milestones M0, M1 and M3 are done: the server, web app,
 > accounts with two-factor authentication, workspaces, guides, the audit log, company
 > branding and PDF/Word/HTML/Markdown/image exports work and run in Docker. Guides can be
-> built from the **browser extension** (Chrome, Edge, Firefox) or from uploaded/pasted
-> screenshots. The desktop recorder is next; see the [roadmap](docs/roadmap.md).
+> recorded with the **browser extension** (Chrome, Edge, Firefox) or the **desktop
+> recorder** (Windows, macOS, Linux/X11), or built from uploaded/pasted screenshots. See the
+> [roadmap](docs/roadmap.md) for what's next.
 
 ## Why
 
@@ -30,7 +31,7 @@ patient/EMS data, or audit evidence. OpnRelay aims to give the same everyday wor
 |---|---|---|
 | **Server** (`opnrelay-server`) | Accounts, guides, media, sharing, exports, audit log, web UI hosting | Rust · Axum · PostgreSQL |
 | **Web app** | Log in, browse, edit, brand, share and export guides | Svelte + TypeScript (served by the server) |
-| **Desktop app** | Record desktop workflows on Windows, macOS and Linux | Rust · Tauri 2 |
+| **Desktop recorder** | Record desktop workflows on Windows, macOS and Linux | Rust · egui |
 | **Browser extension** | Record workflows in Chrome, Edge and Firefox with rich element labels | TypeScript · Manifest V3 |
 
 ## Feature summary (v1)
