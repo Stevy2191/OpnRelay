@@ -510,14 +510,17 @@ async fn failed_first_sync_leaves_no_group() {
         .unwrap()
         .groups
         .insert(HR.into(), fg("HR Staff", "security", &[], &[]));
-    // Let get_group pass, fail the member listing.
-    fake.lock().unwrap().users_fail = false;
-    fake.lock().unwrap().graph_fail = true;
+    // get_group succeeds (so the group row is inserted), the member listing fails.
+    fake.lock().unwrap().members_fail = true;
     let r = owner
         .post("/admin/groups/link", json!({"external_id": HR}))
         .await;
-    assert!(r.status().is_client_error() || r.status().is_server_error());
-    fake.lock().unwrap().graph_fail = false;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        fake.lock().unwrap().app_token_requests >= 1,
+        "the directory was reached"
+    );
+    fake.lock().unwrap().members_fail = false;
     let list: Value = owner.get("/admin/groups").await.json().await.unwrap();
     assert!(list.as_array().unwrap().is_empty());
     assert!(actions(&owner, "idp.group.linked").await.is_empty());

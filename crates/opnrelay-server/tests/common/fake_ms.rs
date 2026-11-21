@@ -35,6 +35,8 @@ pub struct Fake {
     pub graph_fail: bool,
     /// Only `GET /v1.0/users` returns 503.
     pub users_fail: bool,
+    /// Only `transitiveMembers` listings return 503.
+    pub members_fail: bool,
     /// The next Graph directory call returns 429 with `Retry-After: 1`.
     pub throttle_once: bool,
     /// Group ids that answer 404 (deleted in the directory).
@@ -328,6 +330,9 @@ async fn group_members(
     let mut f = s.lock().unwrap();
     if let Some(r) = dir_guard(&mut f, &headers) {
         return r;
+    }
+    if f.members_fail {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     if f.deleted_groups.contains(&id) || !f.groups.contains_key(&id) {
         return StatusCode::NOT_FOUND.into_response();
