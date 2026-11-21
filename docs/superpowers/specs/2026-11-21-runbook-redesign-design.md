@@ -1,6 +1,6 @@
 # "Runbook" web redesign: design notes
 
-Status: in progress (decisions so far) · 2026-11-21
+Status: approved · 2026-11-21
 
 Mockups: published review page "OpnRelay Design Directions" (Runbook section and
 "Inside a workspace").
@@ -45,18 +45,27 @@ organisation.
   - Editors clear it with **"Still accurate"** (restarts the clock, no new
     version) or by publishing a new version. Both are audit-logged (who, when).
 
-- **Guide editor** (mockup, awaiting feedback): one step at a time. Step list on
+- **Guide editor** (mockup approved): one step at a time. Step list on
   the left (thumbnails, headings, tips, drag to reorder), selected step's
   screenshot in the middle with tools (highlight, arrow, box, text, blur, crop,
   replace), step type/title/details and the recorded action on the right.
   Autosave; Publish creates a new version and restarts the review clock.
-- **Admin → People & groups → Groups** (mockup, awaiting feedback): sync status
+- **Admin → People & groups → Groups** (mockup approved): sync status
   banner with Sync now; table of groups with source (Microsoft / OpnRelay),
   members, workspaces it opens, role it grants, last synced; "Add from Microsoft"
   search dialog; groups deleted in Microsoft shown in red with Unlink.
 
-## Still to settle
+## Calls made (not explicitly decided; easy to change)
 
-- Dark mode palette for Runbook.
-- Recorder (desktop) and browser-extension popup restyle.
-- Whether exports adopt the Runbook look by default (branding colours still apply).
+- **Dark mode**: kept (the app follows the system setting today). The builder
+  derives a Runbook dark palette: the navy sidebar stays, the paper and cards go
+  dark navy-grey, orange stays the accent; contrast checked to WCAG AA.
+- **Recorder and extension popup**: restyled in a later step, after the web app,
+  using the same colours and fonts where the toolkit allows.
+- **Exports** (PDF, Word, HTML): unchanged for now; they keep using the company
+  branding settings.
+- **Editor tools not built yet** (arrows, boxes, text, blur, crop, split): the
+  editor layout ships first with the tools that exist today (highlight, replace
+  image); the new tools are a following step (roadmap M5).
+- **Order**: Entra group sync (with leavers) and the empty-state fix first, then
+  the "Needs review" flag, then the Runbook web redesign.
