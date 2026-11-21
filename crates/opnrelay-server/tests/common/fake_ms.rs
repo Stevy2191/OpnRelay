@@ -247,7 +247,18 @@ fn page(f: &Fake, path: &str, q: &HashMap<String, String>, items: Vec<Value>) ->
     let end = (start + size).min(items.len());
     let mut body = json!({ "value": items[start.min(end)..end] });
     if end < items.len() {
-        body["@odata.nextLink"] = json!(format!("{}{path}?$skiptoken={end}", f.base));
+        // Like real Graph, keep the original query ($filter, $search, ...).
+        let mut params: Vec<(&String, &String)> =
+            q.iter().filter(|(k, _)| *k != "$skiptoken").collect();
+        params.sort();
+        let end_s = end.to_string();
+        let mut params: Vec<(&str, &str)> = params
+            .into_iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        params.push(("$skiptoken", &end_s));
+        let url = reqwest::Url::parse_with_params(&format!("{}{path}", f.base), params).unwrap();
+        body["@odata.nextLink"] = json!(url.to_string());
     }
     Json(body)
 }

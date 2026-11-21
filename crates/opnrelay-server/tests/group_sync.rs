@@ -84,3 +84,74 @@ async fn fake_directory_pages_and_nests() {
         .unwrap();
     assert_eq!(r.status(), 401);
 }
+
+/// Follow `@odata.nextLink` from `url`, returning the items of every page.
+async fn all_pages(url: String, token: &str, search: bool) -> (Vec<Value>, usize) {
+    let http = reqwest::Client::new();
+    let (mut url, mut items, mut pages) = (url, Vec::new(), 0);
+    loop {
+        let mut req = http.get(&url).bearer_auth(token);
+        if search {
+            req = req.header("ConsistencyLevel", "eventual");
+        }
+        let r = req.send().await.unwrap();
+        assert_eq!(r.status(), 200);
+        let body: Value = r.json().await.unwrap();
+        pages += 1;
+        items.extend(body["value"].as_array().unwrap().iter().cloned());
+        match body["@odata.nextLink"].as_str() {
+            Some(n) => url = n.to_string(),
+            None => return (items, pages),
+        }
+    }
+}
+
+#[tokio::test]
+async fn fake_directory_next_link_keeps_query() {
+    let (base, fake) = fake_microsoft().await;
+    {
+        let mut f = fake.lock().unwrap();
+        f.page_size = 2;
+        for u in ["a", "b", "c", "d"] {
+            f.users.insert(u.into(), true);
+        }
+        for (id, name) in [
+            ("g1", "Medics A"),
+            ("g2", "Other"),
+            ("g3", "Medics B"),
+            ("g4", "Medics C"),
+        ] {
+            f.groups.insert(
+                id.into(),
+                FakeGroup {
+                    name: name.into(),
+                    kind: "security",
+                    members: vec![],
+                    nested: vec![],
+                },
+            );
+        }
+    }
+    let token = app_token(&base).await;
+
+    let filter = "id in ('a','b','c','missing','d')";
+    let url = reqwest::Url::parse_with_params(
+        &format!("{base}/v1.0/users"),
+        [("$filter", filter), ("$select", "id,accountEnabled")],
+    )
+    .unwrap();
+    let (items, pages) = all_pages(url.to_string(), &token, false).await;
+    let ids: HashSet<&str> = items.iter().map(|u| u["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, HashSet::from(["a", "b", "c", "d"]));
+    assert_eq!(pages, 2);
+
+    let url = reqwest::Url::parse_with_params(
+        &format!("{base}/v1.0/groups"),
+        [("$search", "\"displayName:medics\"")],
+    )
+    .unwrap();
+    let (items, pages) = all_pages(url.to_string(), &token, true).await;
+    let ids: HashSet<&str> = items.iter().map(|g| g["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, HashSet::from(["g1", "g3", "g4"]));
+    assert_eq!(pages, 2);
+}

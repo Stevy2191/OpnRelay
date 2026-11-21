@@ -6,6 +6,8 @@
 
 #![allow(dead_code)]
 
+pub mod fake_ms;
+
 use std::net::SocketAddr;
 
 use opnrelay_crypto::SecretKey;
@@ -276,4 +278,3 @@ pub fn png(w: u32, h: u32) -> Vec<u8> {
     img.write_to(&mut out, ImageFormat::Png).unwrap();
     out.into_inner()
 }
-pub mod fake_ms;
