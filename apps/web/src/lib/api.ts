@@ -178,3 +178,17 @@ export async function api<T>(path: string, opts: Opts = {}): Promise<T> {
 }
 
 export const mediaUrl = (id: string) => `/api/v1/media/${id}`;
+
+export interface Branding {
+  logo_media_id: string | null;
+  primary_color: string;
+  accent_color: string;
+  header_text: string;
+  footer_text: string;
+  cover_page: boolean;
+  show_step_numbers: boolean;
+  watermark_exports: boolean;
+}
+
+export const exportUrl = (guideId: string, format: string, images = true) =>
+  `/api/v1/guides/${guideId}/export?format=${format}${images ? '' : '&images=false'}`;

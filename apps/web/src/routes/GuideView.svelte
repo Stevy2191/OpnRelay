@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-  import { api, type Guide } from '../lib/api';
+  import { api, exportUrl, type Guide } from '../lib/api';
   import { go } from '../lib/router.svelte';
   import { errorText, dateTime, miniMarkdown } from '../lib/format';
   import Screenshot from '../lib/Screenshot.svelte';
@@ -22,6 +22,16 @@
     let n = 0;
     return (guide?.steps ?? []).map((s) => (s.kind === 'action' ? ++n : 0));
   });
+
+  let exportOpen = $state(false);
+  let withImages = $state(true);
+  const formats = [
+    { f: 'pdf', label: 'PDF' },
+    { f: 'docx', label: 'Word (.docx)' },
+    { f: 'html', label: 'HTML (single file)' },
+    { f: 'md', label: 'Markdown (.zip)' },
+    { f: 'png', label: 'Screenshots (.zip)' },
+  ];
 
   async function duplicate() {
     try {
@@ -61,6 +71,17 @@
         </p>
       </div>
       <div class="row">
+        <div class="export">
+          <button onclick={() => (exportOpen = !exportOpen)} aria-expanded={exportOpen}>Export ▾</button>
+          {#if exportOpen}
+            <div class="menu card">
+              {#each formats as x}
+                <a href={exportUrl(guide.id, x.f, withImages)} download onclick={() => (exportOpen = false)}>{x.label}</a>
+              {/each}
+              <label class="inline small"><input type="checkbox" bind:checked={withImages} /> Include screenshots</label>
+            </div>
+          {/if}
+        </div>
         {#if canEdit}
           <button onclick={duplicate}>Duplicate</button>
           <button class="danger" onclick={remove}>Delete</button>
@@ -97,6 +118,11 @@
 
 <style>
   .guide { max-width: 900px; margin: 0 auto; }
+  .export { position: relative; }
+  .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px; padding: 0.4rem; display: flex; flex-direction: column; }
+  .menu a { padding: 0.4rem 0.6rem; border-radius: 6px; color: var(--text); }
+  .menu a:hover { background: var(--surface-2); text-decoration: none; }
+  .menu label { padding: 0.4rem 0.6rem; margin: 0; border-top: 1px solid var(--border); }
   .lead { font-size: 1.05rem; }
   .steps { list-style: none; padding: 0; margin: 1.5rem 0; }
   .step { margin-bottom: 1.75rem; }

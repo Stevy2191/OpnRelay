@@ -90,10 +90,15 @@ served at `/api/v1/openapi.json` (authenticated). Errors use RFC 9457 Problem De
 ### Exports
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/guides/{id}/exports` | `{format: pdf|html|md|docx|png|mp4|webm|gif, options}` → `export_id` |
-| POST | `/exports/bulk` | `{guide_ids | folder_id | workspace_id, format}` → zip |
-| GET | `/exports/{id}` | status + signed download URL |
-| GET | `/exports/{id}/events` | SSE progress |
+| GET | `/guides/{id}/export?format=pdf\|docx\|html\|md\|png[&images=false]` | Implemented. Streams the file as an attachment; requires read access; audit-logged |
+| POST | `/exports/bulk` | *Planned:* `{guide_ids \| folder_id \| workspace_id, format}` → zip |
+
+### Branding
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/branding` | Any signed-in user (the UI shows the logo and colours) |
+| PUT | `/admin/branding` | Admin. Colours, header/footer templates, cover page, numbering, watermark |
+| PUT / DELETE | `/admin/branding/logo` | Admin. Raw PNG/JPEG body (≤ 2 MB), validated and re-encoded |
 
 ### Administration
 | Method | Path |
@@ -102,7 +107,6 @@ served at `/api/v1/openapi.json` (authenticated). Errors use RFC 9457 Problem De
 | GET/POST | `/admin/invitations` |
 | GET/POST/PATCH/DELETE | `/admin/groups` |
 | GET/POST/PATCH/DELETE | `/admin/identity-providers` |
-| GET/PUT | `/admin/branding` (+ `POST /admin/branding/logo`) |
 | GET/PUT | `/admin/policies` |
 | GET/PUT | `/admin/embed-origins` |
 | GET | `/admin/system` (version, storage usage, job queue health) |

@@ -671,3 +671,152 @@ async fn mfa_enrolment_login_replay_and_recovery() {
     assert!(!sessions.as_array().unwrap().is_empty());
     app.cleanup().await;
 }
+
+#[tokio::test]
+async fn branding_and_exports() {
+    let app = TestApp::spawn().await;
+    let owner = app.owner().await;
+    let (viewer, viewer_id) = app.user(&owner, "v@acme.test", "member").await;
+    let (outsider, _) = app.user(&owner, "o@acme.test", "member").await;
+
+    // Branding: members can read, only admins can change.
+    let mut b = json(viewer.get("/branding").await).await;
+    assert_eq!(b["primary_color"], "#1f4fd1");
+    b["primary_color"] = json!("#AA0000");
+    b["watermark_exports"] = json!(true);
+    assert_eq!(
+        viewer.put("/admin/branding", b.clone()).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    let saved = json(owner.put("/admin/branding", b.clone()).await).await;
+    assert_eq!(saved["primary_color"], "#aa0000");
+    b["accent_color"] = json!("red");
+    assert_eq!(
+        owner.put("/admin/branding", b).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    let logo = owner
+        .client
+        .put(format!("{}/admin/branding/logo", owner.base))
+        .header(
+            "x-csrf-token",
+            owner.refresh_csrf().await["csrf_token"].as_str().unwrap(),
+        )
+        .header("content-type", "image/png")
+        .body(png(120, 40))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(logo.status(), StatusCode::OK);
+    let logo_id = json(logo).await["logo_media_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // Everyone signed in can load the logo for the UI.
+    assert_eq!(
+        viewer.get(&format!("/media/{logo_id}")).await.status(),
+        StatusCode::OK
+    );
+
+    // A guide with a screenshot.
+    let ws = json(owner.post("/workspaces", json!({"name": "EMS"})).await).await;
+    let ws_id = ws["id"].as_str().unwrap();
+    owner
+        .put(
+            &format!("/workspaces/{ws_id}/members"),
+            json!({"members": [
+                {"principal_type": "user", "principal_id": viewer_id, "role": "viewer"}
+            ]}),
+        )
+        .await;
+    let g = json(
+        owner
+            .post(
+                "/guides",
+                json!({"workspace_id": ws_id, "title": "Restock the ambulance"}),
+            )
+            .await,
+    )
+    .await;
+    let gid = g["id"].as_str().unwrap();
+    let m = json(
+        owner
+            .upload_png(&format!("/media?guide_id={gid}"), png(300, 200))
+            .await,
+    )
+    .await;
+    owner
+        .put(&format!("/guides/{gid}/steps"), json!({"steps": [
+            {"kind": "heading", "title": "Prep"},
+            {"kind": "action", "title": "Open the inventory app", "body_md": "Use **your** login", "media_id": m["id"],
+             "annotations": {"highlight": {"x": 10, "y": 10, "w": 50, "h": 20}}},
+            {"kind": "alert", "title": "Check expiry dates"}
+        ]}))
+        .await;
+
+    let cases = [
+        ("pdf", "application/pdf", b"%PDF-".as_slice()),
+        (
+            "docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            b"PK".as_slice(),
+        ),
+        (
+            "html",
+            "text/html; charset=utf-8",
+            b"<!doctype html>".as_slice(),
+        ),
+        ("md", "application/zip", b"PK".as_slice()),
+        ("png", "application/zip", b"PK".as_slice()),
+    ];
+    for (fmt, mime, magic) in cases {
+        let r = viewer
+            .get(&format!("/guides/{gid}/export?format={fmt}"))
+            .await;
+        assert_eq!(r.status(), StatusCode::OK, "{fmt}");
+        assert_eq!(r.headers()["content-type"], mime);
+        let cd = r.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(cd.contains("restock-the-ambulance."), "{cd}");
+        let body = r.bytes().await.unwrap();
+        assert!(body.starts_with(magic), "{fmt} magic");
+        if fmt == "html" {
+            let html = String::from_utf8_lossy(&body);
+            assert!(html.contains("--p:#aa0000"));
+            assert!(html.contains("Exported by v@acme.test"));
+            assert!(html.contains("<strong>your</strong>"));
+        }
+    }
+    let no_img = viewer
+        .get(&format!("/guides/{gid}/export?format=html&images=false"))
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(
+        no_img.matches("data:image/png").count(),
+        1,
+        "only the logo remains"
+    );
+    assert_eq!(
+        viewer
+            .get(&format!("/guides/{gid}/export?format=exe"))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        outsider
+            .get(&format!("/guides/{gid}/export?format=pdf"))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    let events = json(owner.get("/audit/events?action=guide.exported").await).await;
+    assert_eq!(events.as_array().unwrap().len(), 6);
+    assert_eq!(json(owner.get("/audit/verify").await).await["ok"], true);
+    app.cleanup().await;
+}

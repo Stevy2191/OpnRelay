@@ -9,6 +9,7 @@ use crate::state::AppState;
 pub mod admin;
 pub mod audit_log;
 pub mod auth;
+pub mod exports;
 pub mod guides;
 pub mod me;
 pub mod media;
@@ -23,6 +24,7 @@ pub fn api() -> Router<AppState> {
         .merge(workspaces::router())
         .merge(guides::router())
         .merge(media::router())
+        .merge(exports::router())
         .merge(audit_log::router())
 }
 

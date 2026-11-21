@@ -22,41 +22,46 @@ Branding applies to: the web viewer, public/embedded share pages, and **every** 
 
 | Format | Engine | Contents |
 |---|---|---|
-| **PDF** | Typst (embedded `typst` crate), with a branded template compiled at runtime | Cover page, optional TOC, numbered steps with screenshots, header/footer, page numbers; A4/Letter; PDF/A-2b option for archiving |
-| **HTML** | Askama templates | Single self-contained `.html` (inline CSS, images as data URIs); responsive; print stylesheet; no scripts |
+| **PDF** | Typst (embedded `typst` crate), with a branded template | Cover page, numbered steps with screenshots, header/footer with logo, page numbers, classification badge, watermark; A4. *Planned:* TOC, Letter size, PDF/A |
+| **HTML** | Built-in renderer | Single self-contained `.html` (inline CSS, images as data URIs, strict CSP); responsive; print stylesheet; no scripts |
 | **Markdown** | Native | `.zip` with `guide.md` + `images/`; CommonMark; logo included as image |
 | **Word (.docx)** | `docx-rs` | Styled headings, numbered steps, images scaled to page width, header/footer with logo |
 | **Images** | `image` crate | `.zip` of PNGs with annotations and highlights burned in, named `01-click-save.png` |
-| **GIF** | `gif` crate (from steps) / ffmpeg (from video) | Animated walkthrough |
-| **Video** | ffmpeg | MP4 (H.264/AAC) or WebM (VP9) with optional branded intro card and step chapter markers |
+| **GIF** *(M7)* | `gif` crate (from steps) / ffmpeg (from video) | Animated walkthrough |
+| **Video** *(M7)* | ffmpeg | MP4 (H.264/AAC) or WebM (VP9) with optional branded intro card and step chapter markers |
 
 Planned later: PowerPoint (.pptx), Confluence, SharePoint, Notion.
 
-### Options (all formats where applicable)
-- Include screenshots: yes/no; image size: small/medium/full
-- Include step descriptions, tips and alerts
-- Include metadata block (owner, version, last updated)
-- Page size and orientation (PDF/DOCX)
-- Table of contents (PDF/DOCX/HTML)
-- Language of generated labels (UI locale)
+### Options
+- Implemented: include screenshots yes/no; cover page, step numbering and watermark (from branding).
+- Planned: image size; page size and orientation; table of contents; label language.
 
 ## 3. Rendering pipeline
 
 ```
-Guide + steps (DB) ──► opnrelay-core::RenderModel  (format-neutral, already permission-filtered)
-                         │  - steps with resolved text
-                         │  - images: decrypted, annotations burned in (opnrelay-redact/annotate)
-                         │  - branding resolved (colours, fonts, logo bytes, header/footer tokens)
+Guide + steps (DB) ──► opnrelay_export::RenderModel  (format-neutral, already permission-checked)
+                         │  - screenshots decrypted, cropped, highlight/boxes burned in, ≤1600 px wide
+                         │  - step Markdown parsed into a tiny safe block model (text runs only)
+                         │  - branding resolved (colours, logo, header/footer tokens, watermark)
                          ▼
-             ┌───────────┼────────────┬──────────┬──────────┐
-           Typst       Askama       Markdown    docx-rs    image/gif
-            PDF         HTML          MD         DOCX       PNG/GIF
+             ┌───────────┬────────────┬──────────┬──────────┐
+           Typst       HTML        Markdown    docx-rs     PNG zip
+            PDF      (1 file)       (zip)       DOCX
 ```
 
-- The `RenderModel` is built once; each renderer is a pure function `RenderModel → bytes`. This makes golden-file snapshot tests easy (`insta`).
-- Annotations are stored as vectors and burned in at export time, so editing a highlight never degrades the original screenshot.
-- Rendering runs in the worker with resource limits (max pages, max image dimensions, timeout) to prevent export-based DoS.
-- Output is encrypted like any media object and expires after 24 h (configurable).
+- The `RenderModel` is built once; each renderer is a pure function `RenderModel → bytes`.
+- **No user content is ever interpreted as markup.** Step text reaches Typst as JSON
+  strings, HTML output is escaped, Markdown links/raw HTML are reduced to text. Typst runs
+  in a sandboxed "world" that can only read the guide's data and images (no file system,
+  no packages, no network).
+- Fonts are bundled ([Inter](../crates/opnrelay-export/fonts/OFL.txt), SIL OFL 1.1, plus
+  Typst's own bundled fonts), so output looks the same on every server.
+- Annotations are stored as vectors and burned in at export time, so editing a highlight
+  never degrades the original screenshot.
+- v1 renders **synchronously** (`GET /api/v1/guides/{id}/export?format=…`) in a blocking
+  thread pool with limits (max 500 screenshots per export, images capped at 1600 px wide,
+  60 exports per user per 10 minutes). Nothing is stored; each export is audit-logged.
+  A background job queue for bulk/video exports is planned with M7.
 
 ## 4. Public / embed views
 - Server-rendered HTML (same Askama templates as the HTML export, plus a light viewer script for image zoom).

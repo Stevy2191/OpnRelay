@@ -7,10 +7,11 @@ clean, branded, shareable how-to guide: numbered steps, screenshots, highlighted
 targets, and optional video/GIF. Everything runs on infrastructure you control: no
 third-party cloud, no data leaving your network.
 
-> Status: **early development**. Milestones M0–M1 are done: the server, web app, accounts
-> with two-factor authentication, workspaces, guides and the audit log work and run in
-> Docker. The desktop recorder, browser extension and exports are next; see the
-> [roadmap](docs/roadmap.md).
+> Status: **early development**. Milestones M0, M1 and M3 are done: the server, web app,
+> accounts with two-factor authentication, workspaces, guides, the audit log, company
+> branding and PDF/Word/HTML/Markdown/image exports work and run in Docker. Guides can be
+> built today from uploaded or pasted screenshots. The desktop recorder and browser
+> extension are next; see the [roadmap](docs/roadmap.md).
 
 ## Why
 
@@ -63,6 +64,11 @@ patient/EMS data, or audit evidence. OpnRelay aims to give the same everyday wor
 ## Contributing & security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+## Third-party assets
+
+The PDF export bundles the [Inter](https://rsms.me/inter/) typeface under the SIL Open Font
+License 1.1 (see [`crates/opnrelay-export/fonts/OFL.txt`](crates/opnrelay-export/fonts/OFL.txt)).
 
 ## License
 

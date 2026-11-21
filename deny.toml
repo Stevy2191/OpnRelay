@@ -7,6 +7,26 @@ all-features = false
 [advisories]
 version = 2
 yanked = "deny"
+# Reviewed exceptions. Each must state why it is not reachable and be removed
+# as soon as upstream allows the fixed version.
+ignore = [
+    # quick-xml 0.38 via typst -> hayagriva -> citationberg (bibliography/CSL
+    # parsing). OpnRelay never uses bibliographies, and the export sandbox
+    # (crates/opnrelay-export/src/pdf.rs) only serves data.json and PNGs, so no
+    # XML reaches this parser.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml only reachable via typst bibliography parsing, which OpnRelay never invokes" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml only reachable via typst bibliography parsing, which OpnRelay never invokes" },
+    # zip 8.x pinned by docx-rs. All advisories concern reading/extracting
+    # untrusted archives; docx-rs and OpnRelay only *write* archives.
+    { id = "RUSTSEC-2026-0367", reason = "zip extraction only; OpnRelay never extracts archives" },
+    { id = "RUSTSEC-2026-0368", reason = "zip extraction only; OpnRelay never extracts archives" },
+    { id = "RUSTSEC-2026-0369", reason = "zip extraction only; OpnRelay never extracts archives" },
+    { id = "RUSTSEC-2026-0429", reason = "zip extraction only; OpnRelay never extracts archives" },
+    { id = "RUSTSEC-2026-0545", reason = "zip AES reading only; OpnRelay never reads encrypted archives" },
+    { id = "RUSTSEC-2026-0546", reason = "zip extraction only; OpnRelay never extracts archives" },
+    { id = "RUSTSEC-2026-0547", reason = "zip legacy decompression only; OpnRelay never reads archives" },
+    { id = "RUSTSEC-2026-0548", reason = "zip stream extraction only; OpnRelay never extracts archives" },
+]
 
 [licenses]
 version = 2

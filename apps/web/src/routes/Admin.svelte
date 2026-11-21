@@ -4,8 +4,9 @@
   import { api, type Group, type OrgRole, type Policies, type User } from '../lib/api';
   import { session } from '../lib/session.svelte';
   import { errorText, when } from '../lib/format';
+  import BrandingSettings from './BrandingSettings.svelte';
 
-  let tab = $state<'users' | 'groups' | 'policies'>('users');
+  let tab = $state<'users' | 'groups' | 'policies' | 'branding'>('users');
   let users = $state<User[]>([]);
   let groups = $state<Group[]>([]);
   let policies = $state<Policies | null>(null);
@@ -87,6 +88,7 @@
   <button role="tab" aria-selected={tab === 'users'} class:primary={tab === 'users'} onclick={() => (tab = 'users')}>Users</button>
   <button role="tab" aria-selected={tab === 'groups'} class:primary={tab === 'groups'} onclick={() => (tab = 'groups')}>Groups</button>
   <button role="tab" aria-selected={tab === 'policies'} class:primary={tab === 'policies'} onclick={() => (tab = 'policies')}>Security & defaults</button>
+  <button role="tab" aria-selected={tab === 'branding'} class:primary={tab === 'branding'} onclick={() => (tab = 'branding')}>Branding</button>
 </div>
 
 {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -167,6 +169,8 @@
       </div>
     </div>
   {/each}
+{:else if tab === 'branding'}
+  <BrandingSettings />
 {:else if policies}
   <form class="card policies" onsubmit={savePolicies}>
     <h2>Sign-in security</h2>

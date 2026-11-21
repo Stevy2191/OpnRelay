@@ -41,7 +41,11 @@
   {@const me = session.me}
   <header class="topbar">
     <a class="brand" href="#/">
-      <img src="/favicon.svg" alt="" />
+      {#if session.branding?.logo_media_id}
+        <img class="logo" src={`/api/v1/media/${session.branding.logo_media_id}`} alt="" />
+      {:else}
+        <img src="/favicon.svg" alt="" />
+      {/if}
       <span>{me.organization.name}</span>
     </a>
     <form class="search" onsubmit={submitSearch} role="search">
@@ -91,6 +95,7 @@
     flex-wrap: wrap;
   }
   .brand { color: var(--text); }
+  .brand .logo { width: auto; max-width: 140px; height: 28px; object-fit: contain; }
   .search { flex: 1; min-width: 180px; max-width: 480px; }
   nav a { color: var(--text); padding: 0.25rem 0.5rem; }
   main { max-width: 1200px; margin: 0 auto; padding: 1.25rem; }

@@ -28,9 +28,9 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 - **Demo:** record a workflow on Windows/macOS and get a guide on the server.
 
 ## M3: Exports & branding
-- [ ] Branding settings UI
-- [ ] PDF (Typst), HTML, Markdown, DOCX, PNG zip
-- [ ] Export jobs, watermarking, audit events
+- [x] Branding settings UI (logo, colours, header/footer, cover page, numbering, watermark)
+- [x] PDF (Typst), HTML, Markdown, DOCX, PNG zip
+- [x] Watermarking, audit events (synchronous rendering; background jobs come with M7)
 - **Demo:** branded PDF/Word of a recorded guide. *(This milestone is the internal pilot point.)*
 
 ## M4: Browser extension
