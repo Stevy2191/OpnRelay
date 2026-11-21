@@ -5,6 +5,7 @@
   import { session } from '../lib/session.svelte';
   import { errorText, when } from '../lib/format';
   import BrandingSettings from './BrandingSettings.svelte';
+  import GroupsTab from './GroupsTab.svelte';
   import SsoSettings from './SsoSettings.svelte';
   import BackupSettings from './BackupSettings.svelte';
   import { route, query } from '../lib/router.svelte';
@@ -19,7 +20,6 @@
   let link = $state('');
 
   let invite = $state({ email: '', display_name: '', org_role: 'member' as OrgRole });
-  let groupName = $state('');
   let patterns = $state('');
 
   async function load() {
@@ -80,11 +80,6 @@
     policies.redaction_patterns = patterns.split('\n').map((s) => s.trim()).filter(Boolean);
     await run(() => api('/admin/policies', { method: 'PUT', body: policies }), 'Policies saved');
   }
-
-  async function toggleMember(g: Group, userId: string, on: boolean) {
-    const ids = on ? [...g.member_ids, userId] : g.member_ids.filter((x) => x !== userId);
-    await run(() => api(`/admin/groups/${g.id}/members`, { method: 'PUT', body: { user_ids: ids } }));
-  }
 </script>
 
 <h1>Administration</h1>
@@ -130,9 +125,10 @@
           <tr>
             <td><strong>{u.display_name}</strong><br /><span class="muted small">{u.email}</span></td>
             <td>
-              <select value={u.org_role} disabled={self || locked} onchange={(e) => update(u, { org_role: (e.currentTarget as HTMLSelectElement).value })} aria-label="Role">
+              <select value={u.org_role} disabled={self || locked || u.role_source === 'idp'} onchange={(e) => update(u, { org_role: (e.currentTarget as HTMLSelectElement).value })} aria-label="Role">
                 {#each roles as r}{#if r !== 'owner' || isOwner || u.org_role === 'owner'}<option value={r}>{r}</option>{/if}{/each}
               </select>
+              {#if u.role_source === 'idp'}<br /><span class="muted small">Set by Microsoft group {u.role_from}</span>{/if}
             </td>
             <td><span class="badge">{u.status}</span></td>
             <td>{u.mfa_enabled ? '✅' : '—'}</td>
@@ -157,24 +153,7 @@
     </table>
   </div>
 {:else if tab === 'groups'}
-  <form class="card row" onsubmit={(e) => { e.preventDefault(); run(() => api('/admin/groups', { body: { name: groupName } }), 'Group created').then(() => (groupName = '')); }}>
-    <input placeholder="New group name (e.g. EMS Supervisors)" required bind:value={groupName} aria-label="Group name" style="flex:1" />
-    <button class="primary" type="submit">Create group</button>
-  </form>
-  <p class="muted small">Add a group to a workspace (in the workspace's settings) to give all its members access at once.</p>
-  {#each groups as g (g.id)}
-    <div class="card group">
-      <div class="spread">
-        <h3>{g.name} <span class="muted small">{g.member_ids.length} members</span></h3>
-        <button class="small danger" onclick={() => confirm(`Delete group ${g.name}?`) && run(() => api(`/admin/groups/${g.id}`, { method: 'DELETE' }))}>Delete</button>
-      </div>
-      <div class="members">
-        {#each users.filter((u) => u.status !== 'disabled') as u (u.id)}
-          <label class="inline small"><input type="checkbox" checked={g.member_ids.includes(u.id)} onchange={(e) => toggleMember(g, u.id, (e.currentTarget as HTMLInputElement).checked)} /> {u.display_name}</label>
-        {/each}
-      </div>
-    </div>
-  {/each}
+  <GroupsTab {users} {groups} {run} />
 {:else if tab === 'branding'}
   <BrandingSettings />
 {:else if tab === 'sso'}
@@ -220,8 +199,6 @@
   .linkbox { margin: 1rem 0; display: flex; gap: 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .linkbox code { word-break: break-all; }
   .card + .card { margin-top: 1rem; }
-  .group h3 { margin: 0; }
-  .members { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-top: 0.5rem; }
   .two > div { flex: 1; min-width: 200px; }
   .policies { max-width: 720px; }
 </style>

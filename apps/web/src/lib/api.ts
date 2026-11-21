@@ -101,9 +101,53 @@ export interface User {
   mfa_enabled: boolean;
   last_login_at: string | null;
   created_at: string;
+  role_source: 'manual' | 'idp';
+  role_from: string | null;
 }
 
-export interface Group { id: string; name: string; source: string; member_ids: string[] }
+export interface Group {
+  id: string;
+  name: string;
+  source: 'manual' | 'idp';
+  external_id: string | null;
+  grants_role: 'admin' | 'auditor' | null;
+  missing_since: string | null;
+  last_synced_at: string | null;
+  member_ids: string[];
+}
+
+/** A group found in the Microsoft directory (GET /admin/sso/groups/search). */
+export interface DirGroup {
+  id: string;
+  display_name: string;
+  description: string | null;
+  kind: string;
+  on_prem: boolean;
+  linked: boolean;
+}
+
+/** Result of POST /admin/sso/sync. */
+export interface SyncSummary {
+  groups: number;
+  added: number;
+  removed: number;
+  roles_changed: number;
+  disabled: number;
+  missing: number;
+  error: string | null;
+  warnings: string[];
+  brake: number | null;
+}
+
+export interface SsoStatus {
+  enabled: boolean;
+  group_sync_enabled: boolean;
+  group_sync_last_at: string | null;
+  group_sync_last_ok_at: string | null;
+  group_sync_last_error: string | null;
+  group_sync_last_warning: string | null;
+  group_sync_brake_pending: number | null;
+}
 
 export interface Member {
   principal_type: 'user' | 'group';

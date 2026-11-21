@@ -103,3 +103,8 @@ th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; color
 .center-page .card { width: 100%; max-width: 400px; }
 .brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 1.1rem; }
 .brand img { width: 28px; height: 28px; }
+
+.warning { color: #8a5300; background: #fff4d6; border: 1px solid #f0d28a; border-radius: 8px; padding: 0.5rem 0.75rem; }
+@media (prefers-color-scheme: dark) {
+  .warning { color: #f5c36b; background: #3a2c10; border-color: #6b5320; }
+}

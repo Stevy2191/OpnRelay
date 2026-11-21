@@ -1,17 +1,48 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '../lib/api';
-  import { errorText } from '../lib/format';
+  import { api, type SyncSummary } from '../lib/api';
+  import { dateTime, errorText } from '../lib/format';
 
   type S = {
     configured: boolean; enabled: boolean; tenant_id: string; client_id: string; has_secret: boolean;
     jit_provisioning: boolean; default_role: string; sso_only: boolean; redirect_uri: string;
+    group_sync_enabled: boolean; group_sync_last_at: string | null; group_sync_last_ok_at: string | null;
+    group_sync_last_error: string | null; group_sync_last_warning: string | null; group_sync_brake_pending: number | null;
   };
+  const PERMISSIONS = ['GroupMember.Read.All', 'User.Read.All'];
   let s = $state<S | null>(null);
   let secret = $state('');
   let error = $state('');
   let notice = $state('');
+  let syncing = $state(false);
+  let summary = $state<SyncSummary | null>(null);
+
+  const stale = $derived(
+    !!s && s.group_sync_enabled && (!s.group_sync_last_ok_at || Date.now() - Date.parse(s.group_sync_last_ok_at) > 24 * 3600 * 1000),
+  );
+
+  async function copy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      notice = `Copied ${text}`;
+    } catch {
+      error = 'Could not copy. Select the text and copy it by hand.';
+    }
+  }
+
+  async function syncNow(confirmBrake = false) {
+    syncing = true;
+    error = notice = '';
+    try {
+      summary = await api<SyncSummary>('/admin/sso/sync', { body: confirmBrake ? { confirm_brake: true } : {} });
+      s = await api<S>('/admin/sso');
+    } catch (err) {
+      error = errorText(err);
+    } finally {
+      syncing = false;
+    }
+  }
 
   onMount(async () => {
     try {
@@ -29,7 +60,8 @@
       await api('/admin/sso', {
         method: 'PUT',
         body: { enabled: s.enabled, tenant_id: s.tenant_id, client_id: s.client_id, client_secret: secret,
-          jit_provisioning: s.jit_provisioning, default_role: s.default_role, sso_only: s.sso_only },
+          jit_provisioning: s.jit_provisioning, default_role: s.default_role, sso_only: s.sso_only,
+          group_sync_enabled: s.group_sync_enabled },
       });
       secret = '';
       s = await api<S>('/admin/sso');
@@ -62,8 +94,41 @@
         <option value="admin">Admin</option>
       </select>
       <label class="inline"><input type="checkbox" bind:checked={s.sso_only} /> Microsoft sign-in only (passwords stay available to owners as emergency access)</label>
+      <h2>Group sync</h2>
+      <label class="inline"><input type="checkbox" bind:checked={s.group_sync_enabled} /> Keep OpnRelay groups and roles in step with Microsoft groups (hourly and at sign-in)</label>
+      {#if s.group_sync_enabled}
+        <p class="small">In Entra, add these <strong>application</strong> permissions (Microsoft Graph) and grant admin consent:</p>
+        <ul class="perms">
+          {#each PERMISSIONS as perm}
+            <li><code>{perm}</code> <button type="button" class="small" onclick={() => copy(perm)}>Copy</button></li>
+          {/each}
+        </ul>
+        <p class="small muted">Save first, then link groups on the Groups tab. Needs a specific tenant ID (not “common”).</p>
+      {/if}
       <p><button class="primary" type="submit">Save</button></p>
     </form>
+    {#if s.group_sync_enabled}
+      <div class="card sync">
+        <h2>Group sync status</h2>
+        <p class="small">Last run: {dateTime(s.group_sync_last_at)}<br />Last success: {dateTime(s.group_sync_last_ok_at)}</p>
+        {#if s.group_sync_last_error}<p class="error" role="alert">{s.group_sync_last_error}</p>{/if}
+        {#if s.group_sync_last_warning}<p class="warning" role="status">{s.group_sync_last_warning}</p>{/if}
+        {#if stale}<p class="warning" role="status">No successful sync for over 24 hours.</p>{/if}
+        {#if s.group_sync_brake_pending}
+          <div class="warning" role="alert">
+            <p>The sync paused itself: it would disable {s.group_sync_brake_pending} people. That is a lot at once, so check Microsoft before going ahead.</p>
+            <button class="danger" disabled={syncing} onclick={() => syncNow(true)}>Disable {s.group_sync_brake_pending} people</button>
+          </div>
+        {/if}
+        <p><button type="button" disabled={syncing} onclick={() => syncNow()}>{syncing ? 'Syncing…' : 'Sync now'}</button></p>
+        {#if summary}
+          <p class="small muted">
+            {#if summary.error}Sync reported an error: {summary.error}{:else}Synced {summary.groups} groups: {summary.added} added, {summary.removed} removed, {summary.roles_changed} roles changed, {summary.disabled} disabled, {summary.missing} missing in Microsoft.{/if}
+            {#each summary.warnings as w}<br />{w}{/each}
+          </p>
+        {/if}
+      </div>
+    {/if}
     <div class="card help">
       <h2>Setting up the app in Entra</h2>
       <ol class="small">
@@ -84,5 +149,7 @@
   h2 { font-size: 1.05rem; margin: 0.75rem 0 0.25rem; }
   .help ol { padding-left: 1.2rem; }
   .help li { margin-bottom: 0.5rem; }
+  .perms { padding-left: 1.2rem; }
+  .sync p { margin: 0.4rem 0; }
   .uri { word-break: break-all; }
 </style>
