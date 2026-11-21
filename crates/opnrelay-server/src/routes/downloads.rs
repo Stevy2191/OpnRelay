@@ -39,7 +39,10 @@ pub struct DownloadFile {
 /// Classify a release asset by its file name.
 pub fn classify(name: &str) -> (&'static str, String) {
     let n = name.to_lowercase();
-    let kind = if [".msi", ".exe", ".dmg", ".pkg"].iter().any(|e| n.ends_with(e)) {
+    let kind = if [".msi", ".exe", ".dmg", ".pkg"]
+        .iter()
+        .any(|e| n.ends_with(e))
+    {
         "installer"
     } else if n.ends_with(".deb") {
         "Debian/Ubuntu package"

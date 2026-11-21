@@ -162,7 +162,7 @@ bold "Downloading and starting OpnRelay (this can take a minute)…"
 if [ "${OPNRELAY_SKIP_PULL:-}" != "1" ]; then
   docker compose pull --quiet || die "could not download the OpnRelay image $IMAGE:$VERSION"
 fi
-docker compose up -d --quiet-pull >/dev/null
+docker compose up -d --quiet-pull >/dev/null 2>&1
 for _ in $(seq 1 90); do
   if [ "$(docker compose ps server --format '{{.Health}}' 2>/dev/null)" = "healthy" ]; then break; fi
   sleep 2
@@ -173,9 +173,9 @@ LINK=""
 if [ -n "$RESTORE" ]; then
   bold "Restoring the backup…"
   TMP="$(mktemp)"; cp "$RESTORE" "$TMP"; chmod 644 "$TMP"
-  docker compose cp "$TMP" server:/data/backups/restore.orbk >/dev/null
+  docker compose cp "$TMP" server:/data/restore.orbk >/dev/null 2>&1 || { rm -f "$TMP"; die "could not copy the backup into the container"; }
   rm -f "$TMP"
-  docker compose exec -T server opnrelay-server backup restore /data/backups/restore.orbk || die "restore failed (is OPNRELAY_RESTORE_KEY the right master key?)"
+  docker compose exec -T server opnrelay-server backup restore /data/restore.orbk || die "restore failed (is OPNRELAY_RESTORE_KEY the right master key?)"
 else
   LINK="$(docker compose exec -T server opnrelay-server admin create-owner \
     --email "$OPNRELAY_ADMIN_EMAIL" --name "$OPNRELAY_ADMIN_NAME" --org-name "$OPNRELAY_ORG" | grep -o 'http[^ ]*#/invite/[A-Za-z0-9_-]*' || true)"

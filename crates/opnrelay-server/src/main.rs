@@ -123,6 +123,7 @@ async fn main() -> Result<()> {
             MIGRATOR.run(&db).await.context("applying migrations")?;
             let state = AppState::new(db, cfg.clone());
             state.storage.ensure_root().await?;
+            tokio::fs::create_dir_all(&cfg.backup_dir).await.ok();
             opnrelay_server::backup::spawn_scheduler(state.clone());
             let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
             tracing::info!(addr = %cfg.bind, url = %cfg.public_url, "OpnRelay listening");
