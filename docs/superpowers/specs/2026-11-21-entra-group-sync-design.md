@@ -1,6 +1,6 @@
 # Microsoft Entra group sync: design
 
-Status: draft for approval · 2026-11-21
+Status: approved with leaver handling · 2026-11-21
 
 ## Why
 
@@ -45,14 +45,15 @@ organisation.
    person), **when a group is first linked**, and **on demand** ("Sync now").
 4. Optionally a linked group can **grant an organisation role** (*admin* or
    *auditor*), so for example *IT Admins* become OpnRelay admins.
-5. Every change made by sync is in the **audit log**.
+5. **Leavers lose access within the hour**: when a person's Entra account is
+   disabled or deleted (in a hybrid setup, usually by disabling them in
+   on-premises AD), OpnRelay disables their account and ends all their sessions.
+6. Every change made by sync is in the **audit log**.
 
 ## Non-goals
 
-- Turning off or deleting OpnRelay accounts when an Entra account is disabled
-  (that is SCIM provisioning, listed under "Later" in the roadmap). Disabled
-  Entra users cannot sign in with Microsoft, and people removed from a group lose
-  that group's access at the next sync.
+- Full SCIM provisioning (creating accounts ahead of first sign-in, syncing
+  profile fields). Leavers *are* handled; see "Leavers" below.
 - Creating OpnRelay accounts for group members who have never signed in.
   Accounts are still created on first sign-in (or by invitation); the new account
   gets its groups at that first sign-in.
@@ -66,6 +67,7 @@ organisation.
 - Sync ever changing or removing an **owner**.
 - Admins having to paste long group IDs.
 - Hourly sync filling the audit log with "nothing changed" entries.
+- A misconfiguration (wrong tenant, broken permission) **mass-disabling** accounts.
 
 ## Approaches considered
 
@@ -88,10 +90,10 @@ How quickly removals take effect (the user chose **B**):
 Add **application** permissions (admin consent) to the existing app registration:
 
 - `GroupMember.Read.All`: list and search groups, read their (transitive) members.
-- `User.ReadBasic.All`: needed for the per-user check at sign-in
-  (`/users/{oid}/transitiveMemberOf`). *Builder: confirm against current Graph docs
-  that this is the least-privileged pair; drop it if `GroupMember.Read.All`
-  alone suffices.*
+- `User.Read.All`: read whether each linked person's account is enabled
+  (`accountEnabled`) for leaver handling, and the per-user group check at sign-in
+  (`/users/{oid}/transitiveMemberOf`). Read-only. *Builder: confirm against current
+  Graph docs that this pair is the least privileged that covers both.*
 
 The server obtains an app-only token with the client-credentials grant against
 `{login}/{tenant}/oauth2/v2.0/token`, scope `https://graph.microsoft.com/.default`,
@@ -178,6 +180,40 @@ by flipping one switch.)*
   sync failed, with the error and the time of the last successful sync. If there
   has been no successful sync for 24 hours, the banner says so plainly.
 
+### Leavers
+
+Context: this organisation's accounts are synced from on-premises AD to Entra
+(Entra Connect, ~30-minute cycle). The normal leaver process is disabling the AD
+account; the disabled state reaches Entra, but group memberships usually stay.
+
+- Part of each full sync (only while group sync is on): read `accountEnabled` for
+  every OpnRelay user with a linked Microsoft identity (batched; `$batch` or
+  `id in (...)` filters, builder's choice). Users Graph reports as **not found**
+  count as deleted.
+- For each such user who is **disabled or deleted in Entra** and active in
+  OpnRelay: set `status = 'disabled'`, `disabled_by = 'microsoft'`, revoke all
+  sessions and device grants (desktop recorder, browser extension), and remove
+  them from all Microsoft-linked groups. Audit `user.disabled` with source
+  `microsoft` and the reason (disabled / deleted).
+- **Owners are never disabled** by sync; instead the sync warning banner says
+  "Owner *name* is disabled in Microsoft".
+- **Re-enabling**: if the person is enabled in Entra again, their next Microsoft
+  sign-in re-activates them, but only when `disabled_by = 'microsoft'`. Accounts
+  an admin disabled by hand (`disabled_by = 'admin'`) stay disabled. Audit
+  `user.enabled` with source `microsoft`.
+- **Safety brake**: if one run would disable more than 10 people *and* more than
+  20% of Microsoft-linked users, it disables no one, records `idp.sync.failed`
+  with the reason, and shows the banner "Sync would have disabled N people;
+  nothing was changed. Check the Microsoft settings, then run Sync now and
+  confirm." Admins can confirm that one run from the banner.
+- Any Graph error while reading accounts means no one is disabled in that run.
+- Data model: `users.disabled_by text NULL CHECK (disabled_by IN
+  ('admin','microsoft'))`; the existing admin disable action sets `'admin'`.
+
+Worst case from disabling someone in AD to losing OpnRelay access: about 90
+minutes (Entra Connect cycle plus the hourly sync). Hourly was chosen over 15
+minutes.
+
 ### Roles
 
 - Only users with `role_source = 'idp'` have their role set by sync. Owners are
@@ -255,6 +291,10 @@ transitive groups, 404 and 429 responses. Integration tests cover:
 - first Microsoft sign-in of a new person lands them in the right workspace
 - Graph failure leaves memberships unchanged and records the error
 - group deleted in Entra empties the group and marks it missing
+- leaver: disabled in Entra → OpnRelay account disabled, sessions and device
+  grants revoked, audit written; deleted (404) treated the same; re-enabled in
+  Entra → next sign-in re-activates; admin-disabled accounts stay disabled;
+  owners never disabled; the safety brake stops a mass-disable
 - role mapping: admin/auditor granted and revoked; owners untouched; manual role
   edits refused while managed; removing the last role mapping returns users to
   manual with their role kept
