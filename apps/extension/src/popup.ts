@@ -141,7 +141,7 @@ async function renderStart(s: Status) {
 
 function renderRecording(s: Status) {
   const r = s.recording!;
-  h(`<p class="rec"><span class="dot ${r.paused ? 'paused' : ''}"></span>${r.paused ? 'Paused' : 'Recording'} · ${r.steps} step${r.steps === 1 ? '' : 's'}</p>
+  h(`<p class="rec"><span class="dot ${r.paused ? 'paused' : ''}"></span>${r.paused ? 'Paused' : 'Recording'} <span class="mono">· ${r.steps} step${r.steps === 1 ? '' : 's'}</span></p>
      <p class="muted small">${esc(r.title)}</p>
      <div class="row">
        <button id="pause">${r.paused ? 'Resume' : 'Pause'}</button>

@@ -1,23 +1,44 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
-:root { --primary: #1f4fd1; --danger: #c4314b; --muted: #5d6673; --border: #dde1e7; color-scheme: light dark; }
-@media (prefers-color-scheme: dark) { :root { --primary: #5b84f5; --muted: #9aa5b1; --border: #2f3842; } body { background: #1a1f25; color: #e8ecf0; } }
-body { font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; width: 320px; margin: 0; padding: 12px 14px 14px; }
-header { display: flex; align-items: center; gap: 8px; font-size: 15px; margin-bottom: 10px; }
+/* Runbook palette. Fonts: IBM Plex when installed, otherwise the system stack (nothing is bundled). */
+:root {
+  --ink: #0f1a2b; --ink-2: #17243a; --paper: #f5f6f8; --card: #ffffff; --line: #dfe3ea;
+  --text: #182235; --muted: #627089; --signal: #ff6b1a; --signal-soft: #fff0e6; --signal-text: #b14708;
+  --danger: #b42318; --danger-soft: #fdecec; --on-signal: #0f1a2b;
+  --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #0b1424; --ink-2: #16233a; --paper: #0e1626; --card: #152036; --line: #26344d;
+    --text: #e6ebf3; --muted: #93a1b8; --signal: #ff7a2e; --signal-soft: #3a2414; --signal-text: #ffb27f;
+    --danger: #ff7b72; --danger-soft: #3a1717;
+  }
+}
+body { font: 14px/1.45 var(--sans); width: 320px; margin: 0; background: var(--paper); color: var(--text); }
+header { display: flex; align-items: center; gap: 8px; font-size: 15px; padding: 10px 14px; background: var(--ink); color: #fff; border-bottom: 2px solid var(--signal); }
 header img { width: 22px; height: 22px; }
-label { display: block; margin: 8px 0 3px; font-weight: 500; }
+main { padding: 4px 14px 14px; }
+p { margin: 10px 0; }
+label { display: block; margin: 10px 0 3px; font-weight: 500; }
 label.inline { display: flex; align-items: center; gap: 6px; font-weight: 400; margin: 6px 0; }
-input[type=text], input[type=url], select { width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; }
-button { font: inherit; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; }
-button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+input[type=checkbox] { accent-color: var(--signal); }
+input[type=text], input[type=url], select { width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: inherit; }
+button { font: inherit; font-weight: 500; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: inherit; cursor: pointer; }
+button.primary { background: var(--signal); border-color: var(--signal); color: var(--on-signal); font-weight: 600; }
+button.primary:hover:not(:disabled) { filter: brightness(1.06); }
 button.danger { color: var(--danger); }
 button:disabled { opacity: .55; cursor: default; }
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
 .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .row > button { flex: 1; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 .error { color: var(--danger); }
+.mono { font-family: var(--mono); font-weight: 500; }
 .rec { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); animation: pulse 1.2s infinite; }
 .dot.paused { background: var(--muted); animation: none; }
 @keyframes pulse { 50% { opacity: .3; } }
-a { color: var(--primary); }
+@media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+a { color: var(--signal-text); }

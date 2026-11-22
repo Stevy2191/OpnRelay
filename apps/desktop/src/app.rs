@@ -60,9 +60,113 @@ fn load_account(client: Shared) -> Result<(Shared, String, Vec<Workspace>), Stri
     ))
 }
 
+/// Runbook palette tokens for one theme.
+struct Palette {
+    ink: Color32,
+    paper: Color32,
+    card: Color32,
+    line: Color32,
+    text: Color32,
+    muted: Color32,
+    signal: Color32,
+    signal_soft: Color32,
+    signal_text: Color32,
+    ok: Color32,
+    danger: Color32,
+}
+
+const LIGHT: Palette = Palette {
+    ink: Color32::from_rgb(0x0f, 0x1a, 0x2b),
+    paper: Color32::from_rgb(0xf5, 0xf6, 0xf8),
+    card: Color32::from_rgb(0xff, 0xff, 0xff),
+    line: Color32::from_rgb(0xdf, 0xe3, 0xea),
+    text: Color32::from_rgb(0x18, 0x22, 0x35),
+    muted: Color32::from_rgb(0x62, 0x70, 0x89),
+    signal: Color32::from_rgb(0xff, 0x6b, 0x1a),
+    signal_soft: Color32::from_rgb(0xff, 0xf0, 0xe6),
+    signal_text: Color32::from_rgb(0xb1, 0x47, 0x08),
+    ok: Color32::from_rgb(0x13, 0x8a, 0x5e),
+    danger: Color32::from_rgb(0xb4, 0x23, 0x18),
+};
+
+const DARK: Palette = Palette {
+    ink: Color32::from_rgb(0x0b, 0x14, 0x24),
+    paper: Color32::from_rgb(0x0e, 0x16, 0x26),
+    card: Color32::from_rgb(0x15, 0x20, 0x36),
+    line: Color32::from_rgb(0x26, 0x34, 0x4d),
+    text: Color32::from_rgb(0xe6, 0xeb, 0xf3),
+    muted: Color32::from_rgb(0x93, 0xa1, 0xb8),
+    signal: Color32::from_rgb(0xff, 0x7a, 0x2e),
+    signal_soft: Color32::from_rgb(0x3a, 0x24, 0x14),
+    signal_text: Color32::from_rgb(0xff, 0xb2, 0x7f),
+    ok: Color32::from_rgb(0x3c, 0xcf, 0x91),
+    danger: Color32::from_rgb(0xff, 0x7b, 0x72),
+};
+
+fn palette(ui: &egui::Ui) -> &'static Palette {
+    if ui.visuals().dark_mode {
+        &DARK
+    } else {
+        &LIGHT
+    }
+}
+
+fn runbook_visuals(base: egui::Visuals, p: &Palette) -> egui::Visuals {
+    let mut v = base;
+    v.override_text_color = Some(p.text);
+    v.panel_fill = p.paper;
+    v.window_fill = p.card;
+    v.extreme_bg_color = p.card;
+    v.faint_bg_color = p.card;
+    v.hyperlink_color = p.signal_text;
+    v.error_fg_color = p.danger;
+    v.selection.bg_fill = p.signal_soft;
+    v.selection.stroke = egui::Stroke::new(1.0, p.signal_text);
+    v.widgets.noninteractive.bg_fill = p.card;
+    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, p.line);
+    v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, p.text);
+    for w in [
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        w.bg_fill = p.card;
+        w.weak_bg_fill = p.card;
+        w.bg_stroke = egui::Stroke::new(1.0, p.line);
+        w.fg_stroke = egui::Stroke::new(1.0, p.text);
+        w.corner_radius = 6.0.into();
+    }
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, p.signal);
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.0, p.signal);
+    v
+}
+
+/// Apply the Runbook palette to both egui themes; egui follows the OS light/dark setting.
+fn apply_runbook_theme(ctx: &egui::Context) {
+    ctx.set_visuals_of(
+        egui::Theme::Light,
+        runbook_visuals(egui::Visuals::light(), &LIGHT),
+    );
+    ctx.set_visuals_of(
+        egui::Theme::Dark,
+        runbook_visuals(egui::Visuals::dark(), &DARK),
+    );
+}
+
+/// The orange primary button (navy label on signal orange).
+fn primary_button(ui: &mut egui::Ui, label: impl Into<String>) -> egui::Response {
+    let p = palette(ui);
+    ui.add(
+        egui::Button::new(RichText::new(label).strong().color(LIGHT.ink))
+            .fill(p.signal)
+            .stroke(egui::Stroke::new(1.0, p.signal)),
+    )
+}
+
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> App {
-        cc.egui_ctx.set_visuals(egui::Visuals::light());
+        apply_runbook_theme(&cc.egui_ctx);
         let settings = Settings::load();
         let (tx, rx) = channel();
         let mode = CaptureMode::parse(settings.capture_mode.as_deref().unwrap_or("region"));
@@ -222,17 +326,30 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.handle_messages();
         ui.ctx().request_repaint_after(Duration::from_millis(250));
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("OpnRelay").strong().size(18.0));
-                ui.label(RichText::new("Recorder").color(Color32::GRAY));
+        let p = palette(ui);
+        egui::Panel::top("header")
+            .frame(
+                egui::Frame::new()
+                    .fill(p.ink)
+                    .inner_margin(egui::Margin::symmetric(12, 8)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("OpnRelay")
+                            .strong()
+                            .size(18.0)
+                            .color(Color32::WHITE),
+                    );
+                    ui.label(RichText::new("Recorder").color(Color32::from_rgb(0xb8, 0xc2, 0xd3)));
+                });
             });
-            ui.separator();
+        egui::CentralPanel::default().show(ui, |ui| {
             match self.screen {
                 Screen::Server => {
                     ui.label("Enter your company's OpnRelay address:");
                     ui.text_edit_singleline(&mut self.server_input);
-                    if ui.button("Continue").clicked() {
+                    if primary_button(ui, "Continue").clicked() {
                         match opnrelay_client::normalize_server(&self.server_input) {
                             Some(url) => {
                                 self.settings.server_url = Some(url);
@@ -246,7 +363,7 @@ impl eframe::App for App {
                 }
                 Screen::SignIn => {
                     ui.label(format!("Server: {}", self.server()));
-                    if ui.button("Sign in with your browser").clicked() {
+                    if primary_button(ui, "Sign in with your browser").clicked() {
                         self.start_sign_in();
                     }
                     if ui.small_button("Use a different server").clicked() {
@@ -260,7 +377,7 @@ impl eframe::App for App {
                     });
                 }
                 Screen::Ready => {
-                    ui.label(RichText::new(&self.user).color(Color32::GRAY));
+                    ui.label(RichText::new(&self.user).color(p.muted));
                     if self.workspaces.is_empty() {
                         ui.label("You can't create guides yet. Ask an administrator to make you an editor in a workspace.");
                     } else {
@@ -279,13 +396,13 @@ impl eframe::App for App {
                         ui.radio_value(&mut self.mode, CaptureMode::Full, "Full screen");
                         ui.add_space(6.0);
                         if !self.pending.is_empty() {
-                            if ui.button(format!("Retry upload ({} steps)", self.pending.len())).clicked() {
+                            if primary_button(ui, format!("Retry upload ({} steps)", self.pending.len())).clicked() {
                                 self.upload();
                             }
-                        } else if ui.button(RichText::new("Start recording").color(Color32::from_rgb(196, 49, 75)).strong()).clicked() {
+                        } else if primary_button(ui, "● Start recording").clicked() {
                             self.start_recording();
                         }
-                        ui.label(RichText::new("Clicks on this window are never recorded.").small().color(Color32::GRAY));
+                        ui.label(RichText::new("Clicks on this window are never recorded.").small().color(p.muted));
                     }
                     if let Some(url) = self.last_url.clone()
                         && ui.link("Open the last guide").clicked()
@@ -310,10 +427,11 @@ impl eframe::App for App {
                     ui.label(
                         RichText::new(format!("{} · {count} steps", if paused { "Paused" } else { "Recording" }))
                             .size(16.0)
-                            .color(if paused { Color32::GRAY } else { Color32::from_rgb(196, 49, 75) }),
+                            .monospace()
+                            .color(if paused { p.muted } else { p.danger }),
                     );
                     if let Some(e) = err {
-                        ui.label(RichText::new(e).small().color(Color32::from_rgb(196, 49, 75)));
+                        ui.label(RichText::new(e).small().color(p.danger));
                     }
                     ui.horizontal(|ui| {
                         if ui.button(if paused { "Resume" } else { "Pause" }).clicked()
@@ -328,7 +446,7 @@ impl eframe::App for App {
                         }
                     });
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Finish & upload").strong()).clicked()
+                        if primary_button(ui, "Finish & upload").clicked()
                             && let Some(r) = self.recorder.take()
                         {
                             self.pending = r.finish();
@@ -354,7 +472,7 @@ impl eframe::App for App {
             }
             if let Some((ok, m)) = &self.message {
                 ui.add_space(6.0);
-                ui.label(RichText::new(m).color(if *ok { Color32::from_rgb(24, 121, 78) } else { Color32::from_rgb(196, 49, 75) }));
+                ui.label(RichText::new(m).color(if *ok { p.ok } else { p.danger }));
             }
         });
     }
