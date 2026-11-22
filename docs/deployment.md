@@ -146,7 +146,7 @@ OneDrive):
   in the audit log.
 
 Restore on a new server with the installer (`OPNRELAY_RESTORE` + `OPNRELAY_RESTORE_KEY`,
-see [microsoft.md §4](microsoft.md#4-restoring)) or manually:
+see [microsoft.md §5](microsoft.md#5-restoring)) or manually:
 `docker compose cp file server:/data/backups/x.orbk && docker compose exec server
 opnrelay-server backup restore /data/backups/x.orbk` (into an empty installation).
 

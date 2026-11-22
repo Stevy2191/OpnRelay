@@ -53,7 +53,8 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 ## M6: Enterprise auth & compliance
 - [ ] WebAuthn/passkeys
 - [x] Microsoft Entra ID sign-in (OIDC + PKCE), automatic accounts, Microsoft-only mode
-- [ ] Entra group → role mapping; SAML 2.0 for other providers
+- [x] Entra group → role mapping, leaver handling (hourly and at sign-in)
+- [ ] SAML 2.0 for other providers
 - [x] Auditor role, audit log search/export/verify (done in M1)
 - [x] Legal hold (done in M1)
 - [x] Scheduled encrypted backups (local + OneDrive) with retention and tested restore
