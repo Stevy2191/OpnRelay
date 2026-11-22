@@ -62,6 +62,8 @@ pub struct GuideSummary {
     #[serde(with = "time::serde::rfc3339::option")]
     pub review_due_at: Option<OffsetDateTime>,
     pub needs_review: bool,
+    /// Media of the first step (by position) that has a screenshot.
+    pub thumb_media_id: Option<Uuid>,
 }
 
 /// When a published guide is next due for review (NULL if it never is).
@@ -85,7 +87,9 @@ const SUMMARY_COLS: &str = concat!(
     " AS review_due_at,
     COALESCE(",
     review_due_sql!(),
-    " < now(), false) AS needs_review"
+    " < now(), false) AS needs_review,
+    (SELECT s.media_id FROM steps s WHERE s.guide_id = g.id AND s.media_id IS NOT NULL
+        ORDER BY s.position LIMIT 1) AS thumb_media_id"
 );
 
 #[derive(Deserialize)]

@@ -1105,3 +1105,70 @@ async fn downloads_page() {
     );
     app.cleanup().await;
 }
+
+#[tokio::test]
+async fn guide_summary_has_thumbnail() {
+    let app = TestApp::spawn().await;
+    let owner = app.owner().await;
+    let ws = json(owner.post("/workspaces", json!({"name": "Ops"})).await).await;
+    let ws_id = ws["id"].as_str().unwrap().to_string();
+    let mk = |title: &'static str| {
+        let owner = &owner;
+        let ws_id = ws_id.clone();
+        async move {
+            json(
+                owner
+                    .post("/guides", json!({"workspace_id": ws_id, "title": title}))
+                    .await,
+            )
+            .await["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+    };
+    let with_media = mk("With media").await;
+    let without = mk("Without media").await;
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let up = owner
+            .upload_png(&format!("/media?guide_id={with_media}"), png(32, 20))
+            .await;
+        ids.push(json(up).await["id"].as_str().unwrap().to_string());
+    }
+    let steps = json!({"steps": [
+        {"id": Uuid::now_v7(), "kind": "heading", "title": "Intro"},
+        {"id": Uuid::now_v7(), "kind": "action", "title": "A", "media_id": ids[0]},
+        {"id": Uuid::now_v7(), "kind": "action", "title": "B", "media_id": ids[1]}
+    ]});
+    assert!(
+        owner
+            .put(&format!("/guides/{with_media}/steps"), steps)
+            .await
+            .status()
+            .is_success()
+    );
+    owner
+        .put(
+            &format!("/guides/{without}/steps"),
+            json!({"steps": [{"id": Uuid::now_v7(), "kind": "text", "title": "Note"}]}),
+        )
+        .await;
+
+    let list = json(owner.get("/guides").await).await;
+    let find = |t: &str| {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["title"] == t)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(find("With media")["thumb_media_id"], ids[0]);
+    assert!(find("Without media")["thumb_media_id"].is_null());
+    let one = json(owner.get(&format!("/guides/{with_media}")).await).await;
+    assert_eq!(one["thumb_media_id"], ids[0]);
+    let none = json(owner.get(&format!("/guides/{without}")).await).await;
+    assert!(none["thumb_media_id"].is_null());
+    app.cleanup().await;
+}
