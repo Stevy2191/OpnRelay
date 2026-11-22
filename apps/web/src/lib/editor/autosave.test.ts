@@ -183,3 +183,57 @@ describe('createAutosave', () => {
     expect(save).not.toHaveBeenCalled();
   });
 });
+
+describe('createAutosave pause/resume/reset', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('pause() waits for a running save, then holds touches until resume()', async () => {
+    const c = controlledSave();
+    const a = createAutosave(c.save, 100);
+    a.touch();
+    await vi.advanceTimersByTimeAsync(100);
+    let paused = false;
+    const p = a.pause().then(() => (paused = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(paused).toBe(false);
+    await c.resolve(true);
+    await p;
+    expect(paused).toBe(true);
+    a.touch();
+    await vi.advanceTimersByTimeAsync(1000);
+    await a.flush();
+    expect(c.save).toHaveBeenCalledTimes(1);
+    expect(a.state).toBe('pending');
+    a.resume();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(c.save).toHaveBeenCalledTimes(2);
+    await c.resolve(true);
+    expect(a.state).toBe('saved');
+  });
+
+  it('resume() without changes does not save', async () => {
+    const save = vi.fn(async () => true);
+    const a = createAutosave(save, 100);
+    await a.pause();
+    a.resume();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('reset() drops unsaved changes and returns to saved', async () => {
+    let ok = false;
+    const save = vi.fn(async () => ok);
+    const a = createAutosave(save, 100);
+    a.touch();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(a.state).toBe('error');
+    a.touch();
+    a.reset();
+    expect(a.state).toBe('saved');
+    ok = true;
+    await vi.advanceTimersByTimeAsync(1000);
+    await a.flush();
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+});

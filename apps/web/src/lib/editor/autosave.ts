@@ -13,6 +13,12 @@ export interface Autosave {
   flush(): Promise<void>;
   /** Stop autosaving for good (e.g. after a conflict); later touches and flushes do nothing. */
   stop(): void;
+  /** Hold saves (e.g. while publishing): waits for a running save; touches are kept until resume(). */
+  pause(): Promise<void>;
+  /** Undo pause(); changes made meanwhile are saved after the usual delay. */
+  resume(): void;
+  /** Forget unsaved changes (the document was reloaded from the server). */
+  reset(): void;
 }
 
 /**
@@ -28,6 +34,7 @@ export function createAutosave(
   let state: SaveState = 'saved';
   let dirty = false;
   let stopped = false;
+  let paused = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running: Promise<void> | null = null;
 
@@ -43,7 +50,7 @@ export function createAutosave(
   }
 
   async function drain() {
-    while (dirty && !stopped) {
+    while (dirty && !stopped && !paused) {
       dirty = false;
       set('saving');
       let ok = false;
@@ -67,6 +74,14 @@ export function createAutosave(
     set(dirty ? 'pending' : 'saved');
   }
 
+  function schedule() {
+    clearTimer();
+    timer = setTimeout(() => {
+      timer = undefined;
+      void run();
+    }, delayMs);
+  }
+
   function run(): Promise<void> {
     if (!running) running = drain().finally(() => (running = null));
     return running;
@@ -80,14 +95,11 @@ export function createAutosave(
       if (stopped) return;
       dirty = true;
       if (!running) set('pending');
-      clearTimer();
-      timer = setTimeout(() => {
-        timer = undefined;
-        void run();
-      }, delayMs);
+      if (paused) clearTimer();
+      else schedule();
     },
     async flush() {
-      if (stopped) return;
+      if (stopped || paused) return;
       clearTimer();
       while (running) await running;
       if (dirty && !stopped) await run();
@@ -95,6 +107,20 @@ export function createAutosave(
     stop() {
       stopped = true;
       clearTimer();
+    },
+    async pause() {
+      paused = true;
+      clearTimer();
+      while (running) await running;
+    },
+    resume() {
+      paused = false;
+      if (dirty && !stopped) schedule();
+    },
+    reset() {
+      clearTimer();
+      dirty = false;
+      if (!running) set('saved');
     },
   };
 }

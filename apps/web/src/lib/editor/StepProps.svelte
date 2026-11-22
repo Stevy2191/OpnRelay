@@ -6,12 +6,19 @@
   let {
     step = $bindable(),
     onchange,
+    onmove,
+    canUp = false,
+    canDown = false,
     onduplicate,
     ondelete,
     titleInput = $bindable(),
   }: {
     step: Step;
     onchange: () => void;
+    /** Move the step one place up (-1) or down (1): for touch and pointer users. */
+    onmove: (d: -1 | 1) => void;
+    canUp?: boolean;
+    canDown?: boolean;
     onduplicate: () => void;
     ondelete: () => void;
     titleInput?: HTMLInputElement;
@@ -123,6 +130,8 @@
       </div>
     {:else}
       <div class="row">
+        <button type="button" class="small" onclick={() => onmove(-1)} disabled={!canUp}>↑ Move up</button>
+        <button type="button" class="small" onclick={() => onmove(1)} disabled={!canDown}>↓ Move down</button>
         <button type="button" class="small" onclick={onduplicate}>Duplicate</button>
         <button type="button" class="small danger" onclick={() => (confirming = true)}>Delete step</button>
       </div>

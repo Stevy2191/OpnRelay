@@ -3,7 +3,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, ApiError, type Folder, type Guide, type Step, type StepKind } from '../lib/api';
-  import { go } from '../lib/router.svelte';
+  import { go, setNavGuard } from '../lib/router.svelte';
   import { workspacesStore } from '../lib/session.svelte';
   import { errorText, when } from '../lib/format';
   import { createAutosave, type SaveState } from '../lib/editor/autosave';
@@ -26,7 +26,10 @@
   let error = $state('');
   let notice = $state('');
   let loadError = $state('');
-  let uploading = $state(false);
+  /** Screenshot uploads in flight (paste, Screenshots…, Add/Replace image). */
+  let uploads = $state(0);
+  let uploading = $derived(uploads > 0);
+  const pendingUploads = new Set<Promise<unknown>>();
   let titleInput: HTMLInputElement | undefined = $state();
   let uploadInput: HTMLInputElement | undefined = $state();
   /** Steps as last saved on the server (JSON), so unchanged steps are not re-sent. */
@@ -113,6 +116,8 @@
     const onPaste = (e: ClipboardEvent) => {
       const target = e.target as HTMLElement;
       if (target && (['INPUT', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable)) return;
+      // Not while a dialog (details, history, publish) is open: the step list is not visible then.
+      if (document.querySelector('dialog[open]')) return;
       const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
       if (files.length) {
         e.preventDefault();
@@ -124,17 +129,19 @@
     };
     window.addEventListener('paste', onPaste);
     window.addEventListener('beforeunload', beforeUnload);
+    // In-app navigation (Done, sidebar, back button): save first, stay on failure.
+    const removeGuard = setNavGuard(guardLeave);
     return () => {
+      removeGuard();
       window.removeEventListener('paste', onPaste);
       window.removeEventListener('beforeunload', beforeUnload);
-      // Route change (sidebar, back button): save what is left.
-      void autosave.flush();
     };
   });
 
   // ---- Selection and step operations ----
 
   let selIdx = $derived(steps.findIndex((s) => s.id === selectedId));
+  /** Step numbers (action steps only, like the reader); 0 for other kinds. */
   let numbers = $derived.by(() => {
     let n = 0;
     return steps.map((s) => (s.kind === 'action' ? ++n : 0));
@@ -199,31 +206,43 @@
     }
   }
 
+  /** Runs an upload task, counted in `uploading` so leaving and publishing can wait for it. */
+  function trackUpload(task: () => Promise<void>): Promise<void> {
+    uploads++;
+    const p = task().finally(() => {
+      uploads--;
+      pendingUploads.delete(p);
+    });
+    pendingUploads.add(p);
+    return p;
+  }
+
+  async function waitUploads() {
+    while (pendingUploads.size) await Promise.allSettled([...pendingUploads]);
+  }
+
   /** Each image becomes a new step after the selected one. */
-  async function addImages(files: File[]) {
-    uploading = true;
-    try {
+  function addImages(files: File[]) {
+    return trackUpload(async () => {
       for (const f of files) {
         const mid = await upload(f);
         if (mid) insert({ id: newId(), kind: 'action', title: 'New step', body_md: '', media_id: mid, annotations: {} });
       }
-    } finally {
-      uploading = false;
-    }
+    });
   }
 
   /** Adds or replaces the selected step's screenshot. */
-  async function setImage(f: File) {
+  function setImage(f: File) {
     const sid = selectedId;
-    uploading = true;
-    const mid = await upload(f);
-    uploading = false;
-    const s = steps.find((x) => x.id === sid);
-    if (!mid || !s) return;
-    s.media_id = mid;
-    // The highlight was placed on the old image.
-    s.annotations = { ...s.annotations, highlight: undefined };
-    touch();
+    return trackUpload(async () => {
+      const mid = await upload(f);
+      const s = steps.find((x) => x.id === sid);
+      if (!mid || !s) return;
+      s.media_id = mid;
+      // The highlight was placed on the old image.
+      s.annotations = { ...s.annotations, highlight: undefined };
+      touch();
+    });
   }
 
   function setHighlight(x: number, y: number, w: number, h: number) {
@@ -255,7 +274,12 @@
 
   // ---- Status, leaving, preview ----
 
-  let edited = $derived(!!guide && (guide.status !== 'published' || (!!guide.published_at && guide.updated_at > guide.published_at) || saveState !== 'saved'));
+  let edited = $derived(
+    !!guide &&
+      (guide.status !== 'published' ||
+        (!!guide.published_at && Date.parse(guide.updated_at) > Date.parse(guide.published_at)) ||
+        saveState !== 'saved'),
+  );
   let nextVersion = $derived((guide?.current_version ?? 0) + 1);
   let statusTag = $derived(!guide ? '' : edited ? `DRAFT · editing v${nextVersion}` : `PUBLISHED v${guide.current_version}`);
   let saveText = $derived(
@@ -265,14 +289,26 @@
   /** Path the user wants to go to while changes are unsaved (in-page confirmation). */
   let leaveTo = $state('');
 
-  async function leave(path: string) {
+  /** Explains why an action did not run, keeping the save error's detail. */
+  function unsavedText(what: string): string {
+    const detail = error.replace(/^Could not save: /, '');
+    return `Could not save your changes${detail ? ` (${detail})` : ''}, so ${what}. Try again.`;
+  }
+
+  /** Waits for uploads and saves everything; true when nothing unsaved is left. */
+  async function settle(): Promise<boolean> {
+    await waitUploads();
     await autosave.flush();
-    if (conflict || autosave.state !== 'saved') {
-      leaveTo = path;
-      return;
-    }
-    leaving = true;
-    go(path);
+    return !conflict && autosave.state === 'saved';
+  }
+
+  /** Navigation guard: allow at once when saved, otherwise save first and stay if that fails. */
+  function guardLeave(to: string): boolean | Promise<boolean> {
+    if (leaving || (autosave.state === 'saved' && !uploading && !conflict)) return true;
+    return settle().then((ok) => {
+      if (!ok) leaveTo = to;
+      return ok;
+    });
   }
 
   function leaveAnyway() {
@@ -284,12 +320,12 @@
   }
 
   async function preview() {
-    // Open the tab now (popup blockers), point it at the reader once saved.
-    const w = window.open('about:blank', '_blank');
-    await autosave.flush();
-    const url = `${location.pathname}${location.search}#/guides/${id}`;
-    if (w) w.location.href = url;
-    else go(`/guides/${id}`);
+    error = '';
+    if (!(await settle())) {
+      if (!conflict) error = unsavedText('the preview would be out of date');
+      return;
+    }
+    window.open(`${location.pathname}${location.search}#/guides/${id}`, '_blank', 'noopener');
   }
 
   function reload() {
@@ -309,10 +345,10 @@
 
   async function openPublish() {
     error = '';
-    await autosave.flush();
+    const ok = await settle();
     if (conflict) return;
-    if (autosave.state !== 'saved') {
-      error ||= 'Could not save your changes, so the guide was not published. Try again.';
+    if (!ok) {
+      error = unsavedText('the guide was not published');
       return;
     }
     publishNote = '';
@@ -325,9 +361,14 @@
     publishing = true;
     error = '';
     try {
-      await autosave.flush();
-      if (conflict || autosave.state !== 'saved') return;
-      guide = await api<Guide>(`/guides/${id}/publish`, { body: { note: publishNote.trim() }, ifMatch: guide.revision });
+      if (!(await settle())) {
+        if (!conflict) error = unsavedText('the guide was not published');
+        publishDlg?.close();
+        return;
+      }
+      // No autosave PUT may run with the same If-Match while publishing.
+      await autosave.pause();
+      guide = await api<Guide>(`/guides/${id}/publish`, { body: { note: publishNote.trim() }, ifMatch: guide!.revision });
       workspacesStore.refreshReviewCount();
       versions = await api<Version[]>(`/guides/${id}/versions`);
       notice = `Published version ${guide.current_version}`;
@@ -341,6 +382,7 @@
         error = `Could not publish: ${errorText(err)}`;
       }
     } finally {
+      autosave.resume();
       publishing = false;
     }
   }
@@ -354,17 +396,25 @@
     restoring = true;
     error = '';
     try {
-      await autosave.flush();
-      if (conflict) return;
+      if (!(await settle())) {
+        if (!conflict) error = unsavedText('the version was not restored');
+        historyDlg?.close();
+        return;
+      }
+      await autosave.pause();
       await api(`/guides/${id}/versions/${v}/restore`, { body: {} });
       await load();
+      // The page now shows the server's steps: nothing is unsaved.
+      autosave.reset();
       selectedId = steps[0]?.id ?? '';
       notice = `Restored version ${v}`;
       restoreAsk = 0;
       historyDlg?.close();
     } catch (e) {
       error = `Could not restore: ${errorText(e)}`;
+      historyDlg?.close();
     } finally {
+      autosave.resume();
       restoring = false;
     }
   }
@@ -375,7 +425,7 @@
 {:else}
   <div class="editor">
     <header class="top">
-      <button type="button" class="small ghost back" onclick={() => leave(`/guides/${id}`)}>← Done</button>
+      <button type="button" class="small ghost back" onclick={() => go(`/guides/${id}`)}>← Done</button>
       <button type="button" class="gtitle" onclick={() => detailsDlg?.showModal()} title={`${meta.title} (edit guide details)`}>
         <span class="gt">{meta.title || 'Untitled guide'}</span>
         <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M11.5 2.5l2 2L6 12l-2.6.6L4 10z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>
@@ -388,7 +438,7 @@
       <div class="actions">
         <button type="button" class="small ghost" onclick={openHistory}>History</button>
         <button type="button" class="small" onclick={preview}>Preview</button>
-        <button type="button" class="small signal" onclick={openPublish} disabled={conflict || publishing}>Publish v{nextVersion}</button>
+        <button type="button" class="small signal" onclick={openPublish} disabled={conflict || publishing || uploading} title={uploading ? 'Waiting for the screenshot upload' : undefined}>Publish v{nextVersion}</button>
       </div>
     </header>
 
@@ -419,6 +469,7 @@
       <div class="col-list">
         <StepList
           {steps}
+          {numbers}
           {selectedId}
           onselect={select}
           onmove={move}
@@ -453,7 +504,16 @@
       />
 
       {#if selIdx >= 0}
-        <StepProps bind:step={steps[selIdx]} bind:titleInput onchange={touch} onduplicate={duplicate} ondelete={removeSelected} />
+        <StepProps
+          bind:step={steps[selIdx]}
+          bind:titleInput
+          canUp={selIdx > 0}
+          canDown={selIdx < steps.length - 1}
+          onmove={(d) => move(selIdx, selIdx + d)}
+          onchange={touch}
+          onduplicate={duplicate}
+          ondelete={removeSelected}
+        />
       {:else}
         <div class="props-empty muted small">Select a step to edit its type, title and details.</div>
       {/if}
@@ -576,7 +636,7 @@
     .col-list { grid-row: span 2; }
   }
   @media (max-width: 900px) {
-    .top { margin: -1rem -1rem 0; padding: 0.5rem 1rem; }
+    .top { margin: -1rem -1rem 0; padding: 0.5rem 1rem; position: static; }
     .gtitle { max-width: 100%; order: 5; flex: 1 1 100%; justify-content: flex-start; padding-left: 0; }
     .actions { margin-left: auto; }
     .cols { grid-template-columns: minmax(0, 1fr); }

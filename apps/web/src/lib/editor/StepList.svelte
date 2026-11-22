@@ -6,6 +6,7 @@
 
   let {
     steps,
+    numbers,
     selectedId,
     onselect,
     onmove,
@@ -14,6 +15,8 @@
     onopen,
   }: {
     steps: Step[];
+    /** Step number per row (action steps only), 0 for other kinds. */
+    numbers: number[];
     selectedId: string;
     onselect: (id: string) => void;
     /** Move the step at `from` so that it ends up at index `to`. */
@@ -25,10 +28,6 @@
   } = $props();
 
   const pad = (n: number) => String(n).padStart(2, '0');
-  let numbers = $derived.by(() => {
-    let n = 0;
-    return steps.map((s) => (s.kind === 'action' ? ++n : 0));
-  });
   let actionCount = $derived(numbers.filter(Boolean).length);
 
   const kindLabel: Record<StepKind, string> = { action: 'Step', heading: 'Heading', text: 'Text', tip: 'Tip', alert: 'Alert' };
@@ -114,11 +113,12 @@
   <div class="head mono">
     <span>STEPS · {actionCount}</span>
     <span class="hint" aria-hidden="true">Alt+↑↓ moves</span>
+    <span class="visually-hidden" id="steps-keys">Up and Down arrows select a step, Alt+Up and Alt+Down move it, Enter edits its title.</span>
   </div>
   {#if steps.length === 0}
     <p class="empty muted small">No steps yet. Add one below, or paste a screenshot (Ctrl/⌘+V).</p>
   {:else}
-    <ol bind:this={listEl} ondragleave={(e) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dropAt = -1; }}>
+    <ol bind:this={listEl} aria-describedby="steps-keys" ondragleave={(e) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dropAt = -1; }}>
       {#each steps as s, i (s.id)}
         <li
           class:drop-before={dropAt === i && dragFrom !== i && dragFrom !== i - 1}
@@ -172,6 +172,7 @@
   .list { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); display: flex; flex-direction: column; min-height: 0; }
   .head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; padding: 0.7rem 0.85rem 0.45rem; font-size: 0.72rem; letter-spacing: 0.06em; color: var(--muted); }
   .hint { font-size: 0.68rem; letter-spacing: 0; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .empty { padding: 0.5rem 0.85rem 0.75rem; margin: 0; }
   ol { list-style: none; margin: 0; padding: 0 0 0.4rem; overflow-y: auto; flex: 1; min-height: 0; }
   li { position: relative; }
