@@ -47,12 +47,12 @@
     return `${ms.slice(0, 8)}-${ms.slice(8, 12)}-7${hex.slice(0, 3)}-${((parseInt(hex[3], 16) & 3) | 8).toString(16)}${hex.slice(4, 7)}-${hex.slice(7, 19)}`;
   }
 
-  async function load() {
+  async function load(): Promise<boolean> {
     try {
       const g = await api<Guide>(`/guides/${id}`);
       if (g.my_permission !== 'edit' && g.my_permission !== 'manage') {
         go(`/guides/${id}`);
-        return;
+        return true;
       }
       guide = g;
       steps = g.steps.map((s) => ({ ...s, annotations: s.annotations ?? {} }));
@@ -66,7 +66,9 @@
     } catch (e) {
       if (guide) error = errorText(e);
       else loadError = errorText(e);
+      return false;
     }
+    return true;
   }
 
   /** Saves guide details (PATCH) and steps (PUT), each only when changed, with If-Match. */
@@ -369,6 +371,7 @@
       // No autosave PUT may run with the same If-Match while publishing.
       await autosave.pause();
       guide = await api<Guide>(`/guides/${id}/publish`, { body: { note: publishNote.trim() }, ifMatch: guide!.revision });
+      workspacesStore.refresh().catch(() => {});
       workspacesStore.refreshReviewCount();
       versions = await api<Version[]>(`/guides/${id}/versions`);
       notice = `Published version ${guide.current_version}`;
@@ -403,7 +406,11 @@
       }
       await autosave.pause();
       await api(`/guides/${id}/versions/${v}/restore`, { body: {} });
-      await load();
+      if (!(await load())) {
+        saveState = 'error';
+        historyDlg?.close();
+        return;
+      }
       // The page now shows the server's steps: nothing is unsaved.
       autosave.reset();
       selectedId = steps[0]?.id ?? '';

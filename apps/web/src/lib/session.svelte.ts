@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { go } from './router.svelte';
 import { api, ApiError, setCsrf, type Branding, type GuideSummary, type Me, type Workspace } from './api';
 
 export const session = $state<{ me: Me | null; loading: boolean; branding: Branding | null }>({ me: null, loading: true, branding: null });
@@ -19,10 +20,16 @@ export async function refresh(): Promise<Me | null> {
 }
 
 export async function logout() {
+  // Go through the router's guard first so an editor with a pending autosave
+  // saves (or the user stays) before the session is destroyed.
+  if (!(await go('/login'))) return; // the guard refused (e.g. unsaved changes)
   try {
     await api('/auth/logout', { method: 'POST' });
   } finally {
     session.me = null;
+    workspacesStore.list = [];
+    workspacesStore.loaded = false;
+    workspacesStore.reviewCount = 0;
     window.location.hash = '/login';
   }
 }

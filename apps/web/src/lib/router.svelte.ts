@@ -63,10 +63,17 @@ function navigate(path: string) {
   route.path = path;
 }
 
-export function go(path: string) {
+/** Navigate; resolves true once the route changed, false if a guard refused. */
+export function go(path: string): Promise<boolean> {
   const answer = guard && path !== route.path ? guard(path) : true;
-  if (answer === true) navigate(path);
-  else Promise.resolve(answer).then((ok) => ok && navigate(path));
+  if (answer === true) {
+    navigate(path);
+    return Promise.resolve(true);
+  }
+  return Promise.resolve(answer).then((ok) => {
+    if (ok) navigate(path);
+    return !!ok;
+  });
 }
 
 /** Match `pattern` like `/guides/:id/edit` against the current path. */

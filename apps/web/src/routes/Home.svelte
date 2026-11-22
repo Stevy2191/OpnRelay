@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+  import { onMount } from 'svelte';
   import PeopleIcon from '../lib/PeopleIcon.svelte';
   import { api, type Folder, type Group, type GuideSummary, type Member } from '../lib/api';
   import { route, query, go } from '../lib/router.svelte';
@@ -8,6 +9,9 @@
   import GuideCard from '../lib/GuideCard.svelte';
   import GuideTable from '../lib/GuideTable.svelte';
 
+  onMount(() => {
+    workspacesStore.refresh().catch(() => {});
+  });
   let workspaces = $derived(workspacesStore.list);
   let folders = $state<Folder[]>([]);
   let members = $state<Member[]>([]);
@@ -133,6 +137,7 @@
       const g = await api<{ id: string }>('/guides', {
         body: { workspace_id: wsId, folder_id: folderId, title: 'Untitled guide' },
       });
+      workspacesStore.refresh().catch(() => {});
       go(`/guides/${g.id}/edit`);
     } catch (err) {
       error = errorText(err);

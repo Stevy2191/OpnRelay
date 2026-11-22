@@ -214,6 +214,7 @@
     error = '';
     try {
       const g = await api<Guide>(`/guides/${id}/duplicate`, { body: {} });
+      workspacesStore.refresh().catch(() => {});
       go(`/guides/${g.id}/edit`);
     } catch (e) {
       error = errorText(e);
@@ -227,6 +228,7 @@
     error = '';
     try {
       await api(`/guides/${id}`, { method: 'DELETE' });
+      workspacesStore.refresh().catch(() => {});
       go('/');
     } catch (e) {
       error = errorText(e);
@@ -354,6 +356,16 @@
               <strong>{calloutTitle(s)}</strong>
               {#if s.body_md}<div>{@html miniMarkdown(s.body_md)}</div>{/if}
             </div>
+          {:else if s.kind === 'text'}
+            <div class="step-card text-step">
+              {#if s.title}<h3 title={s.title}>{#each parts(s.title) as p}{#if p.label}<span class="chip">{p.text}</span>{:else}{p.text}{/if}{/each}</h3>{/if}
+              {#if s.body_md}<div class="body">{@html miniMarkdown(s.body_md)}</div>{/if}
+              {#if s.media_id}
+                <div class="shotwrap">
+                  <Screenshot mediaId={s.media_id} highlight={s.annotations?.highlight} alt={s.title || 'Screenshot'} label={s.annotations?.highlight ? shotLabel(s) : ''} />
+                </div>
+              {/if}
+            </div>
           {:else}
             <div class="step-card">
               <div class="big mono" aria-hidden="true">{pad(numbers[i])}</div>
@@ -416,6 +428,7 @@
   .step { margin-bottom: 2rem; scroll-margin-top: 76px; }
   .step.heading h2 { margin: 1.25rem 0 0; font-size: 1.25rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
   .step-card { border-top: 3px solid var(--sig); padding-top: 0.5rem; }
+  .step-card.text-step { border-top: 0; padding-top: 0; }
   .big { font-size: 1.9rem; font-weight: 500; line-height: 1.1; color: var(--sig-text); }
   .step-card h3 { margin: 0.25rem 0 0; font-size: 1.1rem; line-height: 1.5; overflow-wrap: anywhere; }
   .chip { font-family: var(--font-mono); font-size: 0.92em; font-weight: 500; background: var(--sig-soft); color: var(--sig-text); padding: 0.05rem 0.4rem; border-radius: 4px; }

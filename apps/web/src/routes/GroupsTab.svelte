@@ -89,7 +89,7 @@
     }
   }
 
-  async function chooseRole(g: Group, value: string) {
+  async function chooseRole(g: Group, value: string, sel?: HTMLSelectElement) {
     const role = (value || null) as Group['grants_role'];
     if (role === g.grants_role) {
       rolePending = null;
@@ -102,6 +102,7 @@
     } catch (e) {
       localError = errorText(e);
       rolePending = null;
+      if (sel) sel.value = g.grants_role ?? '';
     }
   }
 
@@ -256,7 +257,7 @@
               <select
                 class="role-select"
                 value={rolePending?.id === g.id ? (rolePending.role ?? '') : (g.grants_role ?? '')}
-                onchange={(e) => chooseRole(g, (e.currentTarget as HTMLSelectElement).value)}
+                onchange={(e) => chooseRole(g, (e.currentTarget as HTMLSelectElement).value, e.currentTarget as HTMLSelectElement)}
                 aria-label={`Also make ${g.name} members`}
               >
                 <option value="">nothing</option>

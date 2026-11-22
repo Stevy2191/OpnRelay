@@ -147,7 +147,7 @@ function renderRecording(s: Status) {
        <button id="pause">${r.paused ? 'Resume' : 'Pause'}</button>
        <button id="stop" class="primary">Finish & upload</button>
      </div>
-     <div class="row"><button id="discard" class="danger">Discard recording</button></div>
+     <div class="row" id="discard-row"><button id="discard" class="danger">Discard recording</button></div>
      <p id="err" class="error small"></p>`);
   bind('pause', async () => {
     await send({ kind: 'pause', paused: !r.paused });
@@ -159,9 +159,16 @@ function renderRecording(s: Status) {
     await render();
   });
   bind('discard', async () => {
-    if (!confirm('Discard all recorded steps?')) return;
-    await send({ kind: 'discard' });
-    await render();
+    // In-popup two-step confirmation (native confirm() is unreliable in popups).
+    const row = document.getElementById('discard-row')!;
+    row.innerHTML = `<p class="small" role="alert" style="flex-basis:100%;margin:0">Discard all steps?</p>
+      <button id="discard-yes" class="danger">Discard</button><button id="discard-keep">Keep</button>`;
+    document.getElementById('discard-keep')!.addEventListener('click', () => void render());
+    bind('discard-yes', async () => {
+      await send({ kind: 'discard' });
+      await render();
+    });
+    document.getElementById('discard-keep')!.focus();
   });
 }
 

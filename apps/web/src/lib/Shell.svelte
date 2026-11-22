@@ -217,16 +217,16 @@
         <span class="kbd hint" aria-hidden="true">/</span>
       </form>
       <div class="user" bind:this={menuEl}>
-        <button class="ghost who" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)} title={me.email}>
+        <button class="ghost who" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)} title={me.email}>
           <span class="avatar" aria-hidden="true">{(me.display_name || me.email).trim().charAt(0).toUpperCase()}</span>
           <span class="uname">{me.display_name}</span>
           <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
         </button>
         {#if menuOpen}
-          <div class="menu-pop" role="menu">
+          <div class="menu-pop">
             <div class="who-info"><strong>{me.display_name}</strong><span class="muted small">{me.email}</span></div>
-            <a role="menuitem" href="#/account" onclick={() => (menuOpen = false)}>Account</a>
-            <button role="menuitem" class="ghost" onclick={() => { menuOpen = false; logout(); }}>Sign out</button>
+            <a href="#/account" onclick={() => (menuOpen = false)}>Account</a>
+            <button class="ghost" onclick={() => { menuOpen = false; logout(); }}>Sign out</button>
           </div>
         {/if}
       </div>

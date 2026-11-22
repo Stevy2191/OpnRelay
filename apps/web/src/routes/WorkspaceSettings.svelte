@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { api, type Group, type Member, type User, type Workspace } from '../lib/api';
   import { go } from '../lib/router.svelte';
-  import { session, isAdmin } from '../lib/session.svelte';
+  import { session, isAdmin, workspacesStore } from '../lib/session.svelte';
   import { errorText } from '../lib/format';
   import PeopleIcon from '../lib/PeopleIcon.svelte';
 
@@ -65,6 +65,7 @@
     if (!ws) return;
     try {
       ws = await api<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: { name: ws.name, description: ws.description } });
+      workspacesStore.refresh().catch(() => {});
       notice = 'Saved';
     } catch (err) {
       error = errorText(err);
@@ -82,6 +83,8 @@
       const saved = await api<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: { review_period_days: reviewOff ? null : reviewDays } });
       if (ws) ws.review_period_days = saved.review_period_days;
       syncReview(saved);
+      workspacesStore.refresh().catch(() => {});
+      workspacesStore.refreshReviewCount();
       notice = 'Review period saved';
     } catch (err) {
       reviewError = errorText(err);
@@ -91,6 +94,7 @@
   async function setHold(on: boolean) {
     try {
       ws = await api<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: { legal_hold: on } });
+      workspacesStore.refresh().catch(() => {});
     } catch (e) {
       error = errorText(e);
     }
@@ -100,6 +104,7 @@
     confirmDelete = false;
     try {
       await api(`/workspaces/${id}`, { method: 'DELETE' });
+      await workspacesStore.refresh().catch(() => {});
       go('/');
     } catch (e) {
       error = errorText(e);
