@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { tick } from 'svelte';
   import { api, exportUrl, type Folder, type Guide, type Step } from '../lib/api';
   import { go } from '../lib/router.svelte';
   import { workspacesStore } from '../lib/session.svelte';
@@ -101,6 +101,11 @@
     return '';
   }
 
+  // True while a programmatic jump is scrolling, so the observer does not fight it.
+  let jumping = false;
+  let jumpTimer: ReturnType<typeof setTimeout> | undefined;
+  const atBottom = () => window.scrollY > 0 && window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+
   // Current step, tracked with an IntersectionObserver over the step elements.
   let current = $state('');
   let currentIdx = $derived(nav.findIndex((n) => n.id === current));
@@ -125,14 +130,27 @@
             if (e.isIntersecting) visible.add(sid);
             else visible.delete(sid);
           }
-          if (visible.size) current = [...visible].sort((a, b) => order.get(a)! - order.get(b)!)[0];
+          if (jumping) return;
+          if (atBottom()) current = items[items.length - 1].id;
+          else if (visible.size) current = [...visible].sort((a, b) => order.get(a)! - order.get(b)!)[0];
         },
         // A band just below the sticky top bar.
         { rootMargin: `${window.matchMedia('(max-width: 1099px)').matches ? -124 : -80}px 0px -60% 0px` },
       );
       for (const n of items) if (stepEls[n.id]) obs.observe(stepEls[n.id]);
     });
-    return () => obs?.disconnect();
+    const onScroll = () => {
+      if (jumping) {
+        clearTimeout(jumpTimer);
+        jumpTimer = setTimeout(() => (jumping = false), 120);
+      } else if (atBottom()) current = items[items.length - 1].id;
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      obs?.disconnect();
+      window.removeEventListener('scroll', onScroll);
+      clearTimeout(jumpTimer);
+    };
   });
 
   let indexEl = $state<HTMLElement | null>(null);
@@ -150,12 +168,16 @@
     const el = stepEls[sid];
     if (!el) return;
     current = sid;
+    jumping = true;
+    clearTimeout(jumpTimer);
+    jumpTimer = setTimeout(() => (jumping = false), 150); // cleared sooner/later by scroll events
     const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     el.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
   }
 
   function onKey(e: KeyboardEvent) {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    if (exportOpen || confirmDelete) return;
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
@@ -170,14 +192,11 @@
     next = Math.max(0, Math.min(steps.length - 1, next));
     e.preventDefault();
     jump(steps[next].id);
+    tick().then(() => indexEl?.querySelector<HTMLElement>('.idx-row.cur')?.focus({ preventScroll: true }));
   }
 
-  onMount(() => {
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  });
-
   let exportOpen = $state(false);
+  let exportBtn = $state<HTMLButtonElement | null>(null);
   let withImages = $state(true);
   const formats = [
     { f: 'pdf', label: 'PDF' },
@@ -217,7 +236,11 @@
 </script>
 
 <svelte:document onclick={onDocClick} />
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape') { exportOpen = false; confirmDelete = false; } }} />
+<svelte:window onkeydown={(e) => {
+  if (e.key !== 'Escape') return;
+  if (exportOpen) { exportOpen = false; exportBtn?.focus(); }
+  confirmDelete = false;
+}} />
 
 {#if error && !guide}
   <p class="error">{error}</p>
@@ -233,7 +256,7 @@
       <h1 title={guide.title}>{guide.title}</h1>
       <div class="row actions">
         <div class="export">
-          <button onclick={() => (exportOpen = !exportOpen)} aria-expanded={exportOpen} aria-haspopup="true">Export ▾</button>
+          <button bind:this={exportBtn} onclick={() => (exportOpen = !exportOpen)} aria-expanded={exportOpen} aria-haspopup="true">Export ▾</button>
           {#if exportOpen}
             <div class="menu card">
               {#each formats as x}
@@ -264,8 +287,8 @@
       {#if guide.needs_review}<span class="tag review">Needs review</span>{/if}
       <span class="tag class">{guide.classification}</span>
       <span class="small muted">{guide.author_name ?? 'Unknown'} · updated {dateTime(guide.updated_at)}</span>
-      {#if guide.reviewed_at}<span class="small muted">· Last reviewed {new Date(guide.reviewed_at).toLocaleDateString()}</span>{/if}
-      {#if sourceText(guide)}<span class="small muted mono">· {sourceText(guide)}</span>{/if}
+      {#if guide.reviewed_at}<span class="small muted">Last reviewed {new Date(guide.reviewed_at).toLocaleDateString()}</span>{/if}
+      {#if sourceText(guide)}<span class="small muted mono">{sourceText(guide)}</span>{/if}
     </div>
   </header>
 
@@ -285,7 +308,8 @@
 
   <div class="reader">
     {#if nav.length}
-      <nav class="index" aria-label="Steps" bind:this={indexEl}>
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <nav class="index" aria-label="Steps" bind:this={indexEl} onkeydown={onKey}>
         <div class="idx-title mono">STEPS · {stepCount}</div>
         <ul>
           {#each nav as n (n.id)}
@@ -308,6 +332,7 @@
             </li>
           {/each}
         </ul>
+        <div class="idx-hint small muted"><span class="kbd">↑</span> <span class="kbd">↓</span> to move</div>
       </nav>
       <div class="idx-select">
         <label for="step-jump" class="small muted">Steps</label>
@@ -357,7 +382,7 @@
   .top { align-items: flex-start; margin-top: 0.35rem; }
   h1 { margin: 0; font-size: 1.6rem; line-height: 1.25; min-width: 0; flex: 1 1 24rem; overflow-wrap: anywhere; }
   .actions { flex: none; }
-  .meta { margin-top: 0.6rem; gap: 0.5rem; }
+  .meta { margin-top: 0.6rem; gap: 0.25rem 0.9rem; }
   .mono { font-family: var(--font-mono); }
   .export { position: relative; }
   .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 220px; padding: 0.4rem; display: flex; flex-direction: column; }
@@ -384,6 +409,7 @@
   .idx-row.cur { background: var(--sig-soft); box-shadow: inset 2px 0 0 var(--sig); font-weight: 500; }
   .idx-row.cur:hover { background: var(--sig-soft); }
   .idx-row.cur .idx-n { color: var(--sig-text); }
+  .idx-hint { padding: 0.5rem 0.9rem 0.15rem; border-top: 1px solid var(--line); margin-top: 0.5rem; }
   .idx-select { display: none; }
 
   .steps { list-style: none; padding: 0; margin: 0; max-width: 760px; min-width: 0; }
