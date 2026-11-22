@@ -24,7 +24,7 @@
     try {
       b = await api<Branding>('/admin/branding', { method: 'PUT', body: b });
       await loadBranding();
-      notice = 'Branding saved. It applies to the app and every export.';
+      notice = 'Branding saved. The company logo and name show in the sidebar; colours and text apply to every export.';
     } catch (err) {
       error = errorText(err);
     }
@@ -52,8 +52,8 @@
   }
 </script>
 
-{#if error}<p class="error">{error}</p>{/if}
-{#if notice}<p class="success">{notice}</p>{/if}
+{#if error}<p class="callout error" role="alert">{error}</p>{/if}
+{#if notice}<p class="callout ok" role="status">{notice}</p>{/if}
 {#if b}
   <div class="grid">
     <form class="card" onsubmit={save}>
@@ -70,6 +70,7 @@
       </div>
 
       <h2>Colours</h2>
+      <p class="muted small">Colours apply to exports (PDF, Word, HTML). The app itself keeps the Runbook look.</p>
       <div class="row">
         <label class="inline">Primary <input type="color" bind:value={b.primary_color} /></label>
         <label class="inline">Highlight <input type="color" bind:value={b.accent_color} /></label>
@@ -109,7 +110,7 @@
   .grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1rem; align-items: start; }
   @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
   h2 { margin: 1rem 0 0.5rem; font-size: 1.05rem; }
-  .logo { max-height: 48px; max-width: 200px; border: 1px solid var(--border); border-radius: 6px; padding: 4px; background: #fff; }
+  .logo { max-height: 48px; max-width: 200px; border: 1px solid var(--border); border-radius: 6px; padding: 4px; background: #fff; /* logos are shown on white, as in exports */ }
   input[type='color'] { width: 48px; height: 32px; padding: 2px; }
   .pv-head { display: flex; align-items: center; gap: 8px; border-bottom: 3px solid var(--p); padding-bottom: 6px; font-size: 0.8rem; color: var(--muted); }
   .pv-head img { max-height: 24px; max-width: 100px; }

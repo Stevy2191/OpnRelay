@@ -5,6 +5,7 @@
   import { go } from '../lib/router.svelte';
   import { errorText } from '../lib/format';
   import { onMount } from 'svelte';
+  import MsMark from '../lib/MsMark.svelte';
   import { route, query } from '../lib/router.svelte';
 
   let providers = $state<{ microsoft: boolean; password: boolean }>({ microsoft: false, password: true });
@@ -68,11 +69,11 @@
   }
 </script>
 
-<div class="center-page">
+<main class="auth-page">
   <form class="card stack" onsubmit={submit}>
     <div class="brand"><img src="/favicon.svg" alt="" /> OpnRelay</div>
     {#if step === 'password' && providers.microsoft}
-      <button type="button" class="primary ms" onclick={microsoft}>Sign in with Microsoft</button>
+      <button type="button" class="btn-ms" onclick={microsoft}><MsMark /> Sign in with Microsoft</button>
       {#if providers.password}<p class="muted small or">or use your OpnRelay password</p>{/if}
     {/if}
     {#if step === 'password'}
@@ -90,13 +91,12 @@
         <input id="code" autocomplete="one-time-code" inputmode="text" required autofocus bind:value={code} />
       </div>
     {/if}
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
+    {#if error}<p class="callout error" role="alert">{error}</p>{/if}
     <button class="primary" type="submit" disabled={busy}>{step === 'password' ? 'Sign in' : 'Verify'}</button>
     <p class="muted small">Forgot your password? Ask an administrator for a reset link.</p>
   </form>
-</div>
+</main>
 
 <style>
-  .ms { width: 100%; justify-content: center; }
   .or { text-align: center; margin: 0.25rem 0; }
 </style>

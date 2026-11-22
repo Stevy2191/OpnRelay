@@ -118,7 +118,7 @@
   {#if steps.length === 0}
     <p class="empty muted small">No steps yet. Add one below, or paste a screenshot (Ctrl/⌘+V).</p>
   {:else}
-    <ol bind:this={listEl} aria-describedby="steps-keys" ondragleave={(e) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dropAt = -1; }}>
+    <ol bind:this={listEl} ondragleave={(e) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dropAt = -1; }}>
       {#each steps as s, i (s.id)}
         <li
           class:drop-before={dropAt === i && dragFrom !== i && dragFrom !== i - 1}
@@ -129,6 +129,7 @@
           <button
             type="button"
             class="row {s.kind}"
+            aria-describedby="steps-keys"
             class:selected={s.id === selectedId}
             class:dragging={dragFrom === i}
             data-sid={s.id}

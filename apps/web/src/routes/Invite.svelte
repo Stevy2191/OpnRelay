@@ -44,11 +44,11 @@
   }
 </script>
 
-<div class="center-page">
-  <div class="card stack">
+<main class="auth-page">
+  <div class="card wide stack">
     <div class="brand"><img src="/favicon.svg" alt="" /> OpnRelay</div>
     {#if done}
-      <p class="success">Your password is set.</p>
+      <p class="callout ok" role="status">Your password is set.</p>
       <button class="primary" onclick={() => go('/login')}>Sign in</button>
     {:else if info}
       <form class="stack" onsubmit={submit}>
@@ -64,14 +64,14 @@
           <label for="pw2">Confirm password</label>
           <input id="pw2" type="password" autocomplete="new-password" required bind:value={confirm} />
         </div>
-        {#if error}<p class="error" role="alert">{error}</p>{/if}
+        {#if error}<p class="callout error" role="alert">{error}</p>{/if}
         <button class="primary" type="submit" disabled={busy}>Set password</button>
       </form>
     {:else if error}
-      <p class="error">{error}</p>
+      <p class="callout error" role="alert">{error}</p>
       <a href="#/login">Go to sign in</a>
     {:else}
       <p class="muted">Checking your link…</p>
     {/if}
   </div>
-</div>
+</main>

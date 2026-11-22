@@ -74,14 +74,18 @@
     }
   }
 
-  async function regenerate() {
-    const password = prompt('Confirm your password to generate new recovery codes');
-    if (!password) return;
+  let regen = $state(false);
+  let regenPw = $state('');
+  async function regenerate(e: Event) {
+    e.preventDefault();
+    mfaErr = '';
     try {
-      recovery = (await api<{ recovery_codes: string[] }>('/me/mfa/recovery-codes', { body: { password } })).recovery_codes;
+      recovery = (await api<{ recovery_codes: string[] }>('/me/mfa/recovery-codes', { body: { password: regenPw } })).recovery_codes;
+      regen = false;
+      regenPw = '';
       await refresh();
-    } catch (e) {
-      mfaErr = errorText(e);
+    } catch (err) {
+      mfaErr = errorText(err);
     }
   }
 
@@ -104,21 +108,29 @@
   <h1>Your account</h1>
   <div class="card">
     <p><strong>{session.me?.display_name}</strong> · {session.me?.email}</p>
-    <p class="muted small">Role: {session.me?.org_role}</p>
+    <p class="muted small">Role: <span class="rolepill {session.me?.org_role}">{session.me?.org_role}</span></p>
   </div>
 
   <div class="card">
     <h2>Two-factor authentication</h2>
     {#if recovery.length}
-      <div class="success">
+      <div class="callout ok">
         <p><strong>Save these recovery codes somewhere safe.</strong> Each code works once if you lose your phone. They will not be shown again.</p>
         <pre class="codes">{recovery.join('\n')}</pre>
         <button class="small" onclick={downloadCodes}>Download as text file</button>
       </div>
     {/if}
     {#if session.me?.mfa_enabled && !enrol}
-      <p>✅ Enabled with an authenticator app. {session.me.recovery_codes_remaining} recovery codes left.</p>
-      <button onclick={regenerate}>New recovery codes</button>
+      <p><span class="tag ok">Enabled</span> Authenticator app. <span class="mono">{session.me.recovery_codes_remaining}</span> recovery codes left.</p>
+      {#if regen}
+        <form class="stack" onsubmit={regenerate}>
+          <label for="regen-pw">Confirm your password to generate new recovery codes</label>
+          <input id="regen-pw" type="password" autocomplete="current-password" required bind:value={regenPw} />
+          <div class="row"><button class="primary" type="submit">Generate new codes</button><button type="button" onclick={() => { regen = false; regenPw = ''; }}>Cancel</button></div>
+        </form>
+      {:else}
+        <button onclick={() => (regen = true)}>New recovery codes</button>
+      {/if}
     {:else if enrol}
       <form class="stack" onsubmit={confirmEnrol}>
         <p>1. Scan this QR code with an authenticator app (Microsoft Authenticator, Google Authenticator, 1Password, Aegis…).</p>
@@ -132,7 +144,7 @@
       <p class="muted">Protect your account with a code from your phone in addition to your password.</p>
       <button class="primary" onclick={startEnrol}>Set up two-factor authentication</button>
     {/if}
-    {#if mfaErr}<p class="error">{mfaErr}</p>{/if}
+    {#if mfaErr}<p class="callout error" role="alert">{mfaErr}</p>{/if}
   </div>
 
   {#if !session.me?.mfa_setup_required}
@@ -145,21 +157,21 @@
       <label for="conf">Confirm new password</label>
       <input id="conf" type="password" autocomplete="new-password" required bind:value={pw.confirm} />
       <p><button class="primary" type="submit">Change password</button></p>
-      {#if pwMsg}<p class="success">{pwMsg}</p>{/if}
-      {#if pwErr}<p class="error">{pwErr}</p>{/if}
+      {#if pwMsg}<p class="callout ok" role="status">{pwMsg}</p>{/if}
+      {#if pwErr}<p class="callout error" role="alert">{pwErr}</p>{/if}
     </form>
 
     <div class="card">
       <h2>Signed-in devices</h2>
       <div class="table-wrap">
-        <table>
+        <table class="data stackable">
           <thead><tr><th>Device</th><th>IP</th><th>Last active</th><th></th></tr></thead>
           <tbody>
             {#each sessions as s (s.id)}
               <tr>
-                <td class="small">{s.user_agent ?? 'Unknown'} {#if s.current}<span class="badge">this device</span>{/if}</td>
-                <td class="small">{s.ip ?? ''}</td>
-                <td class="small">{when(s.last_seen_at)}</td>
+                <td class="small" data-label="Device">{s.user_agent ?? 'Unknown'} {#if s.current}<span class="tag pub">this device</span>{/if}</td>
+                <td class="mono small" data-label="IP">{s.ip ?? ''}</td>
+                <td class="small" data-label="Last active">{when(s.last_seen_at)}</td>
                 <td>{#if !s.current}<button class="small" onclick={() => revoke(s.id)}>Sign out</button>{/if}</td>
               </tr>
             {/each}
@@ -174,14 +186,14 @@
         <p class="muted">No desktop recorder or browser extension is connected.</p>
       {:else}
         <div class="table-wrap">
-          <table>
+          <table class="data stackable">
             <thead><tr><th>App</th><th>Device</th><th>Last used</th><th></th></tr></thead>
             <tbody>
               {#each devices as d (d.id)}
                 <tr>
-                  <td class="small">{d.client_id === 'opnrelay-extension' ? 'Browser extension' : 'Desktop recorder'}</td>
-                  <td class="small">{d.device_name || '—'}</td>
-                  <td class="small">{when(d.last_used_at)}</td>
+                  <td class="small" data-label="App">{d.client_id === 'opnrelay-extension' ? 'Browser extension' : 'Desktop recorder'}</td>
+                  <td class="small" data-label="Device">{d.device_name || '—'}</td>
+                  <td class="small" data-label="Last used">{when(d.last_used_at)}</td>
                   <td><button class="small" onclick={() => disconnect(d.id)}>Disconnect</button></td>
                 </tr>
               {/each}
@@ -197,5 +209,5 @@
   .account { max-width: 720px; margin: 0 auto; }
   .account h2 { margin-top: 0; }
   .qr :global(svg) { width: 200px; height: 200px; background: #fff; padding: 8px; border-radius: 8px; }
-  .codes { font-family: ui-monospace, monospace; font-size: 1rem; background: var(--surface); padding: 0.75rem; border-radius: 8px; columns: 2; }
+  .codes { font-family: var(--font-mono); font-size: 1rem; background: var(--card); color: var(--text); padding: 0.75rem; border-radius: 8px; columns: 2; margin: 0.5rem 0; }
 </style>

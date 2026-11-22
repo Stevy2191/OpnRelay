@@ -43,8 +43,10 @@
           </td>
           {#if wsName}<td class="c-ws"><span class="ell" title={wsName(g.workspace_id)}>{wsName(g.workspace_id)}</span></td>{/if}
           <td class="c-status">
-            {#if g.status === 'published'}<span class="tag pub">Published v{g.current_version}</span>{:else}<span class="tag draft">{g.status}</span>{/if}
-            {#if g.needs_review && showReview(g)}<span class="tag review">Needs review</span>{/if}
+            <div class="tags">
+              {#if g.status === 'published'}<span class="tag pub">Published v{g.current_version}</span>{:else}<span class="tag draft">{g.status}</span>{/if}
+              {#if g.needs_review && showReview(g)}<span class="tag review">Needs review</span>{/if}
+            </div>
           </td>
           <td class="c-class"><span class="tag" class:class={g.classification !== 'internal'}>{g.classification}</span></td>
           <td class="c-steps mono">{g.step_count}</td>
@@ -61,7 +63,7 @@
   .c-guide { width: 37%; }
   .c-ws { width: 16%; }
   .c-status { width: 17%; white-space: normal; }
-  .c-status .tag + .tag { margin-left: 0.3rem; }
+  .tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
   .c-class { width: 14%; }
   .c-steps { width: 6%; }
   .c-upd { width: 11%; white-space: nowrap; }

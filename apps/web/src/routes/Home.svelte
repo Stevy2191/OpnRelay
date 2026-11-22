@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+  import PeopleIcon from '../lib/PeopleIcon.svelte';
   import { api, type Folder, type Group, type GuideSummary, type Member } from '../lib/api';
   import { route, query, go } from '../lib/router.svelte';
   import { session, isAdmin, workspacesStore, shellUi } from '../lib/session.svelte';
@@ -64,9 +65,10 @@
   let canSeeReview = $derived(isAdmin(session.me) || workspaces.some((w) => w.my_permission === 'edit' || w.my_permission === 'manage'));
 
   let token = 0;
-  async function loadGuides() {
+  /** `silent` refreshes in place (no "Loading…" flash) after an in-page change. */
+  async function loadGuides(silent = false) {
     const mine = ++token;
-    loading = true;
+    if (!silent) loading = true;
     error = '';
     try {
       const p = new URLSearchParams();
@@ -115,7 +117,7 @@
       await api(`/workspaces/${wsId}/folders`, { body: { name: folderName.trim() } });
       folderName = '';
       addingFolder = false;
-      await loadGuides();
+      await loadGuides(true);
     } catch (err) {
       error = errorText(err);
     } finally {
@@ -188,7 +190,7 @@
               {#if m.principal_type === 'group'}
                 {#if msGroups.has(m.principal_id)}
                   <svg class="ms" width="12" height="12" viewBox="0 0 12 12" role="img" aria-label="Microsoft group"><rect width="5.5" height="5.5" fill="#f25022" /><rect x="6.5" width="5.5" height="5.5" fill="#7fba00" /><rect y="6.5" width="5.5" height="5.5" fill="#00a4ef" /><rect x="6.5" y="6.5" width="5.5" height="5.5" fill="#ffb900" /></svg>
-                {:else}<span aria-hidden="true">👥</span>{/if}
+                {:else}<span class="pico"><PeopleIcon /></span>{/if}
               {/if}
               <span class="cname">{m.name ?? 'Unknown'}</span>
               <span class="role mono">{m.role}</span>
@@ -335,6 +337,7 @@
   .chip { display: inline-flex; align-items: center; gap: 0.35rem; max-width: 100%; padding: 0.1rem 0.5rem; border: 1px solid var(--line); border-radius: 999px; background: var(--card); font-size: 0.82rem; min-width: 0; }
   .cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14rem; }
   .role { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-strong); }
+  .pico { display: inline-flex; color: var(--muted-strong); }
   .chip.more { color: var(--muted-strong); }
   .ms { flex: none; }
 

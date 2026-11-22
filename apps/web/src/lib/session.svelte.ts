@@ -38,6 +38,8 @@ export async function loadBranding() {
   }
 }
 
+let reviewSeq = 0;
+
 /** Workspace list shared by the shell sidebar and Home; fetched once, refreshed after changes. */
 export const workspacesStore = $state<{
   list: Workspace[];
@@ -59,6 +61,7 @@ export const workspacesStore = $state<{
   },
   /** Call after a guide is marked reviewed or published; the shell also calls it when workspaces or the page change. */
   async refreshReviewCount() {
+    const mine = ++reviewSeq;
     const canEdit =
       isAdmin(session.me) || workspacesStore.list.some((w) => w.my_permission === 'edit' || w.my_permission === 'manage');
     if (!canEdit) {
@@ -66,9 +69,10 @@ export const workspacesStore = $state<{
       return;
     }
     try {
-      workspacesStore.reviewCount = (await api<GuideSummary[]>('/guides?needs_review=true')).length;
+      const n = (await api<GuideSummary[]>('/guides?needs_review=true')).length;
+      if (mine === reviewSeq) workspacesStore.reviewCount = n; // ignore stale responses
     } catch {
-      workspacesStore.reviewCount = 0;
+      if (mine === reviewSeq) workspacesStore.reviewCount = 0;
     }
   },
 });

@@ -79,8 +79,8 @@
   }
 </script>
 
-{#if error}<p class="error">{error}</p>{/if}
-{#if notice}<p class="success">{notice}</p>{/if}
+{#if error}<p class="callout error" role="alert">{error}</p>{/if}
+{#if notice}<p class="callout ok" role="status">{notice}</p>{/if}
 {#if s}
   <div class="grid">
     <form class="card" onsubmit={save}>
@@ -118,11 +118,11 @@
       <div class="card sync">
         <h2>Group sync status</h2>
         <p class="small">Last run: {dateTime(s.group_sync_last_at)}<br />Last success: {dateTime(s.group_sync_last_ok_at)}</p>
-        {#if s.group_sync_last_error}<p class="error" role="alert">{s.group_sync_last_error}</p>{/if}
-        {#if s.group_sync_last_warning}<p class="warning" role="status">{s.group_sync_last_warning}</p>{/if}
-        {#if stale}<p class="warning" role="status">No successful sync for over 24 hours.</p>{/if}
+        {#if s.group_sync_last_error}<p class="callout error" role="alert"><strong>Microsoft sync is failing.</strong> {s.group_sync_last_error}</p>{:else if s.group_sync_last_ok_at}<p class="callout ok">Microsoft sync OK.</p>{/if}
+        {#if s.group_sync_last_warning}<p class="callout warning" role="status">{s.group_sync_last_warning}</p>{/if}
+        {#if stale}<p class="callout warning" role="status">No successful sync for over 24 hours.</p>{/if}
         {#if s.group_sync_brake_pending}
-          <div class="warning" role="alert">
+          <div class="callout warning" role="alert">
             <p>Disabling accounts is on hold: the sync would disable {s.group_sync_brake_pending} people. That is a lot at once, so check Microsoft before going ahead. Memberships and roles keep syncing in the meantime.</p>
             <button class="danger" disabled={syncing} onclick={() => syncNow(true)}>Disable {s.group_sync_brake_pending} people</button>
           </div>
@@ -158,5 +158,7 @@
   .help li { margin-bottom: 0.5rem; }
   .perms { padding-left: 1.2rem; }
   .sync p { margin: 0.4rem 0; }
+  .sync .callout { margin: 0.5rem 0; }
+  .sync .callout button { margin-top: 0.5rem; }
   .uri { word-break: break-all; }
 </style>

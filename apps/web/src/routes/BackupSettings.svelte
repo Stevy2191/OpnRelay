@@ -15,6 +15,7 @@
   let error = $state('');
   let notice = $state('');
   let running = $state(false);
+  let confirmDisconnect = $state(false);
 
   const mb = (n: number | null) => (n == null ? '' : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
@@ -61,14 +62,19 @@
   }
 
   async function disconnect() {
-    if (!confirm('Disconnect OneDrive? Existing backups in OneDrive are not deleted.')) return;
-    await api('/admin/backups/onedrive', { method: 'DELETE' });
-    await load();
+    confirmDisconnect = false;
+    error = notice = '';
+    try {
+      await api('/admin/backups/onedrive', { method: 'DELETE' });
+      await load();
+    } catch (err) {
+      error = errorText(err);
+    }
   }
 </script>
 
-{#if error}<p class="error">{error}</p>{/if}
-{#if notice}<p class="success">{notice}</p>{/if}
+{#if error}<p class="callout error" role="alert">{error}</p>{/if}
+{#if notice}<p class="callout ok" role="status">{notice}</p>{/if}
 {#if s}
   <div class="card status">
     <div class="spread">
@@ -76,7 +82,7 @@
         <strong>Last backup:</strong>
         {#if s.last_run_at}
           {dateTime(s.last_run_at)} ·
-          {#if s.last_status === 'ok'}✅ {mb(s.last_size)}{s.last_remote_at && s.onedrive_enabled ? ' · copied to OneDrive' : ''}{:else}❌ {s.last_error}{/if}
+          {#if s.last_status === 'ok'}<span class="tag ok">OK</span> <span class="mono small">{mb(s.last_size)}</span>{s.last_remote_at && s.onedrive_enabled ? ' · copied to OneDrive' : ''}{:else}<span class="tag bad">Failed</span> {s.last_error}{/if}
         {:else}never{/if}
       </div>
       <button class="primary" onclick={runNow} disabled={running}>{running ? 'Backing up…' : 'Back up now'}</button>
@@ -96,7 +102,16 @@
     {#if !msReady}
       <p class="muted">First set up the Microsoft app under <em>Microsoft sign-in</em> (the same app is used for OneDrive).</p>
     {:else if s.onedrive_account}
-      <p>Connected to <strong>{s.onedrive_account}</strong> · <button type="button" class="small" onclick={disconnect}>Disconnect</button></p>
+      <p>Connected to <strong>{s.onedrive_account}</strong> · <button type="button" class="small" onclick={() => (confirmDisconnect = true)}>Disconnect</button></p>
+      {#if confirmDisconnect}
+        <div class="callout warning confirm" role="alertdialog" aria-label="Confirm disconnect">
+          <span>Disconnect OneDrive? Existing backups in OneDrive are not deleted.</span>
+          <span class="row">
+            <button type="button" class="small danger" onclick={disconnect}>Disconnect</button>
+            <button type="button" class="small" onclick={() => (confirmDisconnect = false)}>Cancel</button>
+          </span>
+        </div>
+      {/if}
       <label class="inline"><input type="checkbox" bind:checked={s.onedrive_enabled} /> Copy every backup to OneDrive</label>
       <div class="row two">
         <div><label for="f">Folder</label><input id="f" bind:value={s.onedrive_folder} /></div>
@@ -126,5 +141,6 @@
   h2 { font-size: 1.05rem; margin: 0.75rem 0 0.25rem; }
   .two > div { flex: 1; min-width: 180px; }
   .files { list-style: none; padding: 0; }
-  .files li { padding: 0.25rem 0; }
+  .files li { padding: 0.25rem 0; overflow-wrap: anywhere; }
+  .confirm { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem 1rem; flex-wrap: wrap; margin: 0.5rem 0; }
 </style>

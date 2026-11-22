@@ -41,15 +41,16 @@
 </script>
 
 <div class="connect card stack">
+  <div class="brand"><img src="/favicon.svg" alt="" /> OpnRelay</div>
   <h1>Connect {appName}?</h1>
   {#if device}<p class="muted">Device: <strong>{device}</strong></p>{/if}
   <p>
     It will be able to create guides and upload screenshots as <strong>{session.me?.display_name}</strong> ({session.me?.email}) in the
     workspaces you can edit. You can disconnect it at any time under <a href="#/account">Account</a>.
   </p>
-  {#if error}<p class="error">{error}</p>{/if}
+  {#if error}<p class="callout error" role="alert">{error}</p>{/if}
   {#if done}
-    <p class="success">Connected. You can close this window and return to the app.</p>
+    <p class="callout ok" role="status">Connected. You can close this window and return to the app.</p>
   {:else}
     <div class="row">
       <button class="primary" onclick={allow} disabled={busy || clientId === ''}>Allow</button>
@@ -59,5 +60,6 @@
 </div>
 
 <style>
-  .connect { max-width: 520px; margin: 3rem auto; }
+  .connect { max-width: 520px; margin: 3rem auto; padding: 1.5rem; }
+  .connect h1 { margin: 0; }
 </style>

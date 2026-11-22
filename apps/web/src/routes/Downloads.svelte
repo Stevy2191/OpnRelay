@@ -10,6 +10,17 @@
   let error = $state('');
   let loaded = $state(false);
 
+  let copied = $state(false);
+  async function copyServer() {
+    try {
+      await navigator.clipboard.writeText(server);
+      copied = true;
+      setTimeout(() => (copied = false), 2000);
+    } catch {
+      error = 'Could not copy. Select the address and copy it by hand.';
+    }
+  }
+
   const ua = navigator.userAgent;
   const mine = ua.includes('Windows') ? 'windows' : ua.includes('Mac') ? 'macos' : ua.includes('Linux') ? 'linux' : '';
   const groups = [
@@ -39,10 +50,10 @@
   <p class="muted">Installers for the OpnRelay desktop recorder, shipped with this server version. Only administrators can see this page; distribute the recorder to your staff (for example with Intune or Group Policy).</p>
   <div class="card">
     <strong>Server address for the recorder:</strong> <code>{server}</code>
-    <button class="small" onclick={() => navigator.clipboard.writeText(server)}>Copy</button>
+    <button class="small" onclick={copyServer}>{copied ? 'Copied' : 'Copy'}</button>
     <p class="muted small">Enter it the first time the recorder starts, or pre-set it for everyone with the <code>OPNRELAY_SERVER_URL</code> environment variable.</p>
   </div>
-  {#if error}<p class="error">{error}</p>{/if}
+  {#if error}<p class="callout error" role="alert">{error}</p>{/if}
   {#if loaded && files.length === 0 && !error}
     <div class="card"><p>No installers are bundled with this server build. Official release images include them; for a source build, see <code>deploy/downloads/README.md</code>.</p></div>
   {/if}
@@ -50,7 +61,7 @@
     {@const list = files.filter((f) => f.platform === g.key)}
     {#if list.length}
       <div class="card" class:mine={g.key === mine}>
-        <h2>{g.title} {#if g.key === mine}<span class="badge published">your computer</span>{/if}</h2>
+        <h2>{g.title} {#if g.key === mine}<span class="tag pub">your computer</span>{/if}</h2>
         <ul>
           {#each list as f (f.name)}
             <li>
@@ -72,5 +83,7 @@
   ul { list-style: none; padding: 0; margin: 0; }
   li { padding: 0.4rem 0; }
   .mine { border-color: var(--sig); }
-  .sha { font-family: ui-monospace, monospace; word-break: break-all; }
+  .sha { font-family: var(--font-mono); word-break: break-all; }
+  li .btn { margin-right: 0.5rem; }
+  li { overflow-wrap: anywhere; }
 </style>

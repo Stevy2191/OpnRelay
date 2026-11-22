@@ -210,7 +210,44 @@ table.data tr:last-child td { border-bottom: 0; }
 table.data tbody tr:hover td { background: var(--surface-2); }
 .table-wrap { overflow-x: auto; max-width: 100%; }
 
+/* Sign-in screens: centred card on navy */
+.auth-page { min-height: 100vh; display: grid; place-items: center; padding: 1rem; background: var(--ink); color: var(--text); }
+.auth-page .card { width: 100%; max-width: 400px; padding: 1.5rem; box-shadow: var(--shadow-pop); }
+.auth-page .card.wide { max-width: 440px; }
 .center-page { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
 .center-page .card { width: 100%; max-width: 400px; }
 .brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 1.1rem; }
 .brand img { width: 28px; height: 28px; }
+.auth-page .brand { font-size: 1.25rem; letter-spacing: -0.01em; }
+.auth-page .brand img { width: 32px; height: 32px; }
+.btn-ms { width: 100%; }
+.auth-page form > button.primary, .auth-page .card > button.primary { width: 100%; padding: 0.55rem 0.9rem; }
+
+.callout.ok { background: var(--ok-soft); border-color: var(--ok-line); border-left-color: var(--ok); color: var(--ok-text); }
+.callout > p { margin: 0; }
+.callout > p + p { margin-top: 0.3rem; }
+
+/* Underline tabs (admin) */
+.utabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--line); margin: 0.75rem 0 1.25rem; overflow-x: auto; }
+.utabs a { padding: 0.5rem 0.9rem; color: var(--muted-strong); font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; text-decoration: none; }
+.utabs a:hover { color: var(--text); text-decoration: none; }
+.utabs a[aria-current='page'] { color: var(--text); border-bottom-color: var(--sig); font-weight: 600; }
+
+/* Role pills and Microsoft chip */
+.rolepill { display: inline-flex; font-family: var(--font-mono); font-size: 0.7rem; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; padding: 0.05rem 0.45rem; border-radius: 4px; background: var(--surface-2); color: var(--muted-strong); border: 1px solid var(--line); line-height: 1.5; }
+.rolepill.admin, .rolepill.owner { background: var(--sig-soft); color: var(--sig-text); border-color: transparent; }
+.tag.ms { background: var(--card); color: var(--text); }
+.tag.ok { color: var(--ok-text); background: var(--ok-soft); border-color: var(--ok-line); }
+.tag.bad { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
+
+/* Tables that turn into stacked cards on phones (td needs data-label) */
+@media (max-width: 720px) {
+  table.data.stackable, table.data.stackable tbody, table.data.stackable tr, table.data.stackable td { display: block; }
+  table.data.stackable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  table.data.stackable tr { padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
+  table.data.stackable tr:last-child { border-bottom: 0; }
+  table.data.stackable td { border: 0; padding: 0.25rem 0.75rem; }
+  table.data.stackable td:empty { display: none; }
+  table.data.stackable td[data-label]::before { content: attr(data-label); display: block; font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted-strong); }
+  table.data.stackable tbody tr:hover td { background: transparent; }
+}

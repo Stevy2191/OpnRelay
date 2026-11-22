@@ -5,6 +5,7 @@
   import { go } from '../lib/router.svelte';
   import { session, isAdmin } from '../lib/session.svelte';
   import { errorText } from '../lib/format';
+  import PeopleIcon from '../lib/PeopleIcon.svelte';
 
   let { id }: { id: string } = $props();
   let ws = $state<Workspace | null>(null);
@@ -14,6 +15,7 @@
   let error = $state('');
   let notice = $state('');
   let pick = $state('');
+  let confirmDelete = $state(false);
   let reviewDays = $state(90);
   let reviewOff = $state(false);
   let reviewError = $state('');
@@ -95,7 +97,7 @@
   }
 
   async function remove() {
-    if (!confirm(`Delete workspace "${ws?.name}" and hide all its guides?`)) return;
+    confirmDelete = false;
     try {
       await api(`/workspaces/${id}`, { method: 'DELETE' });
       go('/');
@@ -114,8 +116,8 @@
   <div class="settings stack">
     <a href={`#/?ws=${id}`} class="small">← Back to {ws.name}</a>
     <h1>{ws.name}: settings</h1>
-    {#if error}<p class="error">{error}</p>{/if}
-    {#if notice}<p class="success">{notice}</p>{/if}
+    {#if error}<p class="callout error" role="alert">{error}</p>{/if}
+    {#if notice}<p class="callout ok" role="status">{notice}</p>{/if}
 
     <form class="card" onsubmit={saveInfo}>
       <label for="n">Name</label><input id="n" bind:value={ws.name} required />
@@ -132,24 +134,25 @@
         <label class="inline"><input type="checkbox" bind:checked={reviewOff} /> Off</label>
       </div>
       <p class="muted small">Published guides not reviewed within this time are flagged “Needs review” for editors. Publishing a new version or choosing “Still accurate” counts as a review.</p>
-      {#if reviewError}<p class="error">{reviewError}</p>{/if}
+      {#if reviewError}<p class="callout error" role="alert">{reviewError}</p>{/if}
       <p><button class="primary" type="submit">Save</button></p>
     </form>
 
     <div class="card">
       <h2>Members</h2>
       <p class="muted small">Viewers can read and export. Editors can also create and change guides. Managers can also manage members. Admins and auditors always have access.</p>
-      <table>
+      <table class="data stackable members">
+        <thead><tr><th>Person or group</th><th>Role</th><th>Actions</th></tr></thead>
         <tbody>
           {#each members as m (m.principal_id)}
             <tr>
-              <td>{m.principal_type === 'group' ? '👥 ' : ''}{m.name ?? m.principal_id}</td>
-              <td>
+              <td data-label="Person or group" ><div class="c-who">{#if m.principal_type === 'group'}<span class="gico" title="Group"><PeopleIcon /></span>{/if}<span>{m.name ?? m.principal_id}</span></div></td>
+              <td data-label="Role">
                 <select value={m.role} aria-label="Role" onchange={(e) => saveMembers(members.map((x) => (x.principal_id === m.principal_id ? { ...x, role: (e.currentTarget as HTMLSelectElement).value as Member['role'] } : x)))}>
                   <option value="viewer">Viewer</option><option value="editor">Editor</option><option value="manager">Manager</option>
                 </select>
               </td>
-              <td><button class="small danger" disabled={m.principal_id === session.me?.id && !isAdmin(session.me)} onclick={() => saveMembers(members.filter((x) => x.principal_id !== m.principal_id))}>Remove</button></td>
+              <td data-label="Actions"><button class="small danger" disabled={m.principal_id === session.me?.id && !isAdmin(session.me)} onclick={() => saveMembers(members.filter((x) => x.principal_id !== m.principal_id))}>Remove</button></td>
             </tr>
           {/each}
         </tbody>
@@ -170,12 +173,22 @@
       <div class="card">
         <h2>Records</h2>
         <label class="inline"><input type="checkbox" checked={ws.legal_hold} onchange={(e) => setHold((e.currentTarget as HTMLInputElement).checked)} /> Legal hold (guides in this workspace cannot be deleted)</label>
-        <p><button class="danger" onclick={remove} disabled={ws.legal_hold}>Delete workspace</button></p>
+        {#if confirmDelete}
+          <div class="callout error confirm" role="alertdialog" aria-label="Confirm delete workspace">
+            <span>Delete workspace “{ws.name}” and hide all its guides?</span>
+            <span class="row">
+              <button class="danger" onclick={remove}>Delete workspace</button>
+              <button onclick={() => (confirmDelete = false)}>Cancel</button>
+            </span>
+          </div>
+        {:else}
+          <p><button class="danger" onclick={() => (confirmDelete = true)} disabled={ws.legal_hold}>Delete workspace</button></p>
+        {/if}
       </div>
     {/if}
   </div>
 {:else if error}
-  <p class="error">{error}</p>
+  <p class="callout error" role="alert">{error}</p>
 {:else}
   <p class="muted">Loading…</p>
 {/if}
@@ -184,4 +197,9 @@
   .settings { max-width: 760px; margin: 0 auto; }
   .settings h2 { margin-top: 0; }
   .add { margin-top: 1rem; }
+  .c-who { display: flex; align-items: center; gap: 0.4rem; }
+  .c-who span:last-child { overflow-wrap: anywhere; }
+  .gico { display: inline-flex; color: var(--muted-strong); }
+  .confirm { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem 1rem; flex-wrap: wrap; }
+  @media (max-width: 720px) { .add select { width: 100% !important; flex-basis: 100%; } }
 </style>

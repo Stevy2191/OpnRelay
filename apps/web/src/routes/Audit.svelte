@@ -25,59 +25,71 @@
   }
   onMount(() => load());
 
+  let verifying = $state(false);
   async function runVerify() {
-    verify = await api('/audit/verify');
+    verifying = true;
+    error = '';
+    try {
+      verify = await api('/audit/verify');
+    } catch (e) {
+      error = errorText(e);
+    } finally {
+      verifying = false;
+    }
   }
 
   const exportUrl = (fmt: string) => `/api/v1/audit/export?format=${fmt}${action ? `&action=${encodeURIComponent(action)}` : ''}`;
   const filters = ['', 'auth.', 'guide.', 'user.', 'workspace.', 'org.', 'audit.'];
 </script>
 
-<div class="spread">
+<div class="spread head">
   <h1>Audit log</h1>
   <div class="row">
-    <button onclick={runVerify}>Verify integrity</button>
+    <button onclick={runVerify} disabled={verifying}>{verifying ? 'Verifying…' : 'Verify integrity'}</button>
     <a class="btn" href={exportUrl('csv')}>Export CSV</a>
     <a class="btn" href={exportUrl('json')}>Export JSON</a>
   </div>
 </div>
 <p class="muted">Every sign-in, view, change, export and admin action is recorded here. Entries are chained with SHA-256 hashes, so any edit or deletion is detectable.</p>
 {#if verify}
-  <p class={verify.ok ? 'success' : 'error'}>
-    {verify.ok ? `✅ Intact: ${verify.events_checked} events verified.` : `❌ Chain broken at event #${verify.first_bad_seq}. Investigate immediately.`}
+  <p class="callout {verify.ok ? 'ok' : 'error'}" role="status">
+    {#if verify.ok}<strong>Intact.</strong> {verify.events_checked} events verified.{:else}<strong>Chain broken</strong> at event #{verify.first_bad_seq}. Investigate immediately.{/if}
   </p>
 {/if}
 
 <div class="row filters">
-  <label for="act" class="inline">Filter:</label>
+  <label for="act" class="inline">Filter</label>
   <select id="act" bind:value={action} onchange={() => load()} style="width:auto">
     {#each filters as f}<option value={f}>{f ? f.replace('.', '') : 'All events'}</option>{/each}
   </select>
 </div>
-{#if error}<p class="error">{error}</p>{/if}
+{#if error}<p class="callout error" role="alert">{error}</p>{/if}
 
-<div class="card table-wrap">
-  <table>
+<div class="table-wrap">
+  <table class="data audit">
     <thead><tr><th>#</th><th>Time</th><th>Who</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
     <tbody>
       {#each events as e (e.seq)}
         <tr>
-          <td class="small muted">{e.seq}</td>
-          <td class="small">{dateTime(e.ts)}</td>
-          <td class="small">{e.actor_label}<br /><span class="muted">{e.actor_ip ?? ''}</span></td>
-          <td><code>{e.action}</code></td>
-          <td class="small">
+          <td class="mono small muted" data-label="#">{e.seq}</td>
+          <td class="mono small time" data-label="Time">{dateTime(e.ts)}</td>
+          <td class="small" data-label="Who">{e.actor_label}<br /><span class="muted mono">{e.actor_ip ?? ''}</span></td>
+          <td data-label="Action"><code class="act">{e.action}</code></td>
+          <td class="small" data-label="Target">
             {#if e.target_type === 'guide' && e.target_id}<a href={`#/guides/${e.target_id}`}>guide</a>{:else}{e.target_type}{/if}
           </td>
-          <td class="small details">{Object.keys(e.metadata).length ? JSON.stringify(e.metadata) : ''}</td>
+          <td class="small details" data-label={Object.keys(e.metadata).length ? 'Details' : undefined}>{Object.keys(e.metadata).length ? JSON.stringify(e.metadata) : ''}</td>
         </tr>
       {/each}
     </tbody>
   </table>
 </div>
-{#if more}<p><button onclick={() => load(false)}>Load older events</button></p>{/if}
+{#if more}<p class="more"><button onclick={() => load(false)}>Load older events</button></p>{/if}
 
 <style>
   .filters { margin: 0.75rem 0; }
-  .details { max-width: 360px; word-break: break-word; font-family: ui-monospace, monospace; font-size: 0.75rem; }
+  .details { max-width: 360px; word-break: break-word; font-family: var(--font-mono); font-size: 0.75rem; }
+  .time { white-space: nowrap; }
+  table.audit { min-width: 720px; }
+  .act { background: transparent; padding: 0; font-size: 0.8rem; overflow-wrap: anywhere; }
 </style>

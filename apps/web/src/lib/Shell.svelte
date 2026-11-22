@@ -18,6 +18,7 @@
   let reviewOnly = $derived(onHome && params.get('needs_review') === 'true');
   let path = $derived(route.path.split('?')[0]);
   let adminTab = $derived(params.get('tab') ?? '');
+  let inSettings = $derived(path === '/admin' && ['policies', 'branding', 'backups'].includes(adminTab));
 
   let canEditSomewhere = $derived(isAdmin(me) || workspacesStore.list.some((w) => w.my_permission === 'edit' || w.my_permission === 'manage'));
   let reviewCount = $derived(workspacesStore.reviewCount);
@@ -188,12 +189,12 @@
         <h2 class="sb-h">Admin</h2>
         <ul>
           {#if isAdmin(me)}
-            <li><a class:active={path === '/admin' && adminTab !== 'policies'} href="#/admin" aria-current={path === '/admin' && adminTab !== 'policies' ? 'page' : undefined}><span class="lbl">People &amp; groups</span></a></li>
+            <li><a class:active={path === '/admin' && !inSettings} href="#/admin" aria-current={path === '/admin' && !inSettings ? 'page' : undefined}><span class="lbl">People &amp; groups</span></a></li>
           {/if}
           <li><a class:active={path === '/audit'} href="#/audit" aria-current={path === '/audit' ? 'page' : undefined}><span class="lbl">Audit log</span></a></li>
           {#if isAdmin(me)}
             <li><a class:active={path === '/downloads'} href="#/downloads" aria-current={path === '/downloads' ? 'page' : undefined}><span class="lbl">Downloads</span></a></li>
-            <li><a class:active={path === '/admin' && adminTab === 'policies'} href="#/admin?tab=policies" aria-current={path === '/admin' && adminTab === 'policies' ? 'page' : undefined}><span class="lbl">Settings</span></a></li>
+            <li><a class:active={inSettings} href="#/admin?tab=policies" aria-current={inSettings ? 'page' : undefined}><span class="lbl">Settings</span></a></li>
           {/if}
         </ul>
       {/if}
