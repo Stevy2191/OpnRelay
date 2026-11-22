@@ -4,7 +4,7 @@
   import { onMount, tick } from 'svelte';
   import { api, ApiError, type Folder, type Guide, type Step, type StepKind } from '../lib/api';
   import { go, setNavGuard } from '../lib/router.svelte';
-  import { workspacesStore } from '../lib/session.svelte';
+  import { workspacesStore, logoutIntent, completeLogout } from '../lib/session.svelte';
   import { errorText, when } from '../lib/format';
   import { createAutosave, type SaveState } from '../lib/editor/autosave';
   import StepList from '../lib/editor/StepList.svelte';
@@ -135,6 +135,7 @@
     const removeGuard = setNavGuard(guardLeave);
     return () => {
       removeGuard();
+      logoutIntent.pending = false;
       window.removeEventListener('paste', onPaste);
       window.removeEventListener('beforeunload', beforeUnload);
     };
@@ -318,7 +319,13 @@
     leaveTo = '';
     leaving = true;
     autosave.stop();
-    go(path);
+    if (logoutIntent.pending) void completeLogout();
+    else go(path);
+  }
+
+  function stay() {
+    leaveTo = '';
+    logoutIntent.pending = false;
   }
 
   async function preview() {
@@ -460,7 +467,7 @@
         <span>Your latest changes are not saved. Leave anyway?</span>
         <div class="row">
           <button type="button" class="small danger" onclick={leaveAnyway}>Leave without saving</button>
-          <button type="button" class="small" onclick={() => (leaveTo = '')}>Stay</button>
+          <button type="button" class="small" onclick={stay}>Stay</button>
         </div>
       </div>
     {/if}

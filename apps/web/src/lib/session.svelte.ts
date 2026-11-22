@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { go } from './router.svelte';
+import { canLeave, go } from './router.svelte';
 import { api, ApiError, setCsrf, type Branding, type GuideSummary, type Me, type Workspace } from './api';
 
 export const session = $state<{ me: Me | null; loading: boolean; branding: Branding | null }>({ me: null, loading: true, branding: null });
@@ -19,10 +19,12 @@ export async function refresh(): Promise<Me | null> {
   return session.me;
 }
 
-export async function logout() {
-  // Go through the router's guard first so an editor with a pending autosave
-  // saves (or the user stays) before the session is destroyed.
-  if (!(await go('/login'))) return; // the guard refused (e.g. unsaved changes)
+/** Set while a sign-out waits on the editor's leave-confirm; "Leave anyway" completes it, "Stay" cancels it. */
+export const logoutIntent = $state({ pending: false });
+
+/** Destroys the session and resets client state, then routes to /login (never while still signed in). */
+export async function completeLogout() {
+  logoutIntent.pending = false;
   try {
     await api('/auth/logout', { method: 'POST' });
   } finally {
@@ -30,8 +32,19 @@ export async function logout() {
     workspacesStore.list = [];
     workspacesStore.loaded = false;
     workspacesStore.reviewCount = 0;
-    window.location.hash = '/login';
+    await go('/login');
   }
+}
+
+export async function logout() {
+  // Ask the router's guard first so an editor with a pending autosave saves
+  // (or the user stays) before the session is destroyed. If it refuses, its
+  // leave-confirm is showing; remember the intent so "Leave anyway" signs out.
+  if (!(await canLeave('/login'))) {
+    logoutIntent.pending = true;
+    return;
+  }
+  await completeLogout();
 }
 
 export const isAdmin = (me: Me | null) => me?.org_role === 'owner' || me?.org_role === 'admin';

@@ -76,6 +76,11 @@ export function go(path: string): Promise<boolean> {
   });
 }
 
+/** Ask the guard (if any) whether leaving for `path` is allowed, without navigating. */
+export async function canLeave(path: string): Promise<boolean> {
+  return !guard || path === route.path ? true : !!(await guard(path));
+}
+
 /** Match `pattern` like `/guides/:id/edit` against the current path. */
 export function match(pattern: string, path: string): Record<string, string> | null {
   const p = pattern.split('/').filter(Boolean);
