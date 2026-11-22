@@ -71,6 +71,6 @@
   h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
   ul { list-style: none; padding: 0; margin: 0; }
   li { padding: 0.4rem 0; }
-  .mine { border-color: var(--primary); }
+  .mine { border-color: var(--sig); }
   .sha { font-family: ui-monospace, monospace; word-break: break-all; }
 </style>

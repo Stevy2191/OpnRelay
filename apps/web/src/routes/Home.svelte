@@ -223,7 +223,7 @@
   .nav.sub { margin: 0 0 0 0.75rem; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; margin-top: 1rem; }
   .guide { color: var(--text); display: block; }
-  .guide:hover { border-color: var(--primary); text-decoration: none; }
+  .guide:hover { border-color: var(--sig); text-decoration: none; }
   .guide h3 { margin: 0.6rem 0 0.25rem; }
   .desc { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
   .empty { margin-top: 1rem; }

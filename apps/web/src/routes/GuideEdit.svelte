@@ -288,7 +288,7 @@
   .step .title { font-weight: 600; margin: 0.5rem 0; }
   .step.tip { border-left: 4px solid var(--ok); }
   .step.alert { border-left: 4px solid var(--danger); }
-  .step.heading { border-left: 4px solid var(--primary); }
+  .step.heading { border-left: 4px solid var(--sig); }
   .kind { width: auto; }
   .side ul { list-style: none; padding: 0; margin: 0; }
   .side li { padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
