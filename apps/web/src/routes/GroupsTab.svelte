@@ -13,6 +13,7 @@
   let groupName = $state('');
   let status = $state<SsoStatus | null>(null);
   let wsByGroup = $state<Record<string, string[]>>({});
+  let wsLookupFailed = $state(false);
   let syncing = $state(false);
   let summary = $state<SyncSummary | null>(null);
   let localError = $state('');
@@ -29,7 +30,7 @@
 
   const syncOn = $derived(!!status?.group_sync_enabled);
   const stale = $derived(
-    syncOn && !!status && (!status.group_sync_last_ok_at || Date.now() - Date.parse(status.group_sync_last_ok_at) > 24 * 3600 * 1000),
+    syncOn && !!status && !!status.group_sync_last_at && (!status.group_sync_last_ok_at || Date.now() - Date.parse(status.group_sync_last_ok_at) > 24 * 3600 * 1000),
   );
 
   async function loadStatus() {
@@ -44,15 +45,17 @@
     try {
       const map: Record<string, string[]> = {};
       const list = await api<Workspace[]>('/workspaces');
-      await Promise.all(
+      const results = await Promise.allSettled(
         list.map(async (w) => {
           const ms = await api<Member[]>(`/workspaces/${w.id}/members`);
           for (const m of ms) if (m.principal_type === 'group') (map[m.principal_id] ??= []).push(w.name);
         }),
       );
       wsByGroup = map;
+      wsLookupFailed = results.some((r) => r.status === 'rejected');
     } catch {
       // Workspace names are informational; the list still works without them.
+      wsLookupFailed = true;
     }
   }
 
@@ -243,7 +246,7 @@
         <div class="confirm error" role="alertdialog" aria-label="Confirm unlink">
           <span>
             Unlink {g.name}?
-            {#if wss.length}It will lose access to {wss.join(', ')} and its members will lose access they get only through this group.{:else}Its members will lose access they get only through this group.{/if}
+            {#if wsLookupFailed}Couldn't load the workspaces this group is on. Its members may lose access they get only through this group.{:else if wss.length}It will lose access to {wss.join(', ')} and its members will lose access they get only through this group.{:else}Its members will lose access they get only through this group.{/if}
             {#if g.grants_role}People who are {g.grants_role} only through this group go back to member.{/if}
           </span>
           <span class="row">

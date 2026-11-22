@@ -12,6 +12,10 @@
   };
   const PERMISSIONS = ['GroupMember.Read.All', 'User.Read.All'];
   let s = $state<S | null>(null);
+  // Group-sync enabled as last saved on the server (the checkbox in `s` may be unsaved).
+  let savedSync = $state(false);
+  const saved = $derived(s ? { ...s, group_sync_enabled: savedSync } : null);
+  const dirtySync = $derived(!!s && s.group_sync_enabled !== savedSync);
   let secret = $state('');
   let error = $state('');
   let notice = $state('');
@@ -19,7 +23,7 @@
   let summary = $state<SyncSummary | null>(null);
 
   const stale = $derived(
-    !!s && s.group_sync_enabled && (!s.group_sync_last_ok_at || Date.now() - Date.parse(s.group_sync_last_ok_at) > 24 * 3600 * 1000),
+    !!saved && saved.group_sync_enabled && !!saved.group_sync_last_at && (!saved.group_sync_last_ok_at || Date.now() - Date.parse(saved.group_sync_last_ok_at) > 24 * 3600 * 1000),
   );
 
   async function copy(text: string) {
@@ -37,6 +41,7 @@
     try {
       summary = await api<SyncSummary>('/admin/sso/sync', { body: confirmBrake ? { confirm_brake: true } : {} });
       s = await api<S>('/admin/sso');
+      savedSync = s.group_sync_enabled;
     } catch (err) {
       error = errorText(err);
     } finally {
@@ -47,6 +52,7 @@
   onMount(async () => {
     try {
       s = await api<S>('/admin/sso');
+      savedSync = s.group_sync_enabled;
     } catch (e) {
       error = errorText(e);
     }
@@ -65,6 +71,7 @@
       });
       secret = '';
       s = await api<S>('/admin/sso');
+      savedSync = s.group_sync_enabled;
       notice = 'Saved. Try it: sign out and use “Sign in with Microsoft”.';
     } catch (err) {
       error = errorText(err);
@@ -107,7 +114,7 @@
       {/if}
       <p><button class="primary" type="submit">Save</button></p>
     </form>
-    {#if s.group_sync_enabled}
+    {#if savedSync}
       <div class="card sync">
         <h2>Group sync status</h2>
         <p class="small">Last run: {dateTime(s.group_sync_last_at)}<br />Last success: {dateTime(s.group_sync_last_ok_at)}</p>
@@ -120,7 +127,7 @@
             <button class="danger" disabled={syncing} onclick={() => syncNow(true)}>Disable {s.group_sync_brake_pending} people</button>
           </div>
         {/if}
-        <p><button type="button" disabled={syncing} onclick={() => syncNow()}>{syncing ? 'Syncing…' : 'Sync now'}</button></p>
+        <p><button type="button" disabled={syncing || dirtySync} onclick={() => syncNow()}>{syncing ? 'Syncing…' : 'Sync now'}</button>{#if dirtySync} <span class="small muted">Save first</span>{/if}</p>
         {#if summary}
           <p class="small muted">
             {#if summary.error}Sync reported an error: {summary.error}{:else}Synced {summary.groups} groups: {summary.added} added, {summary.removed} removed, {summary.roles_changed} roles changed, {summary.disabled} disabled, {summary.missing} missing in Microsoft.{/if}

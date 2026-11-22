@@ -142,11 +142,22 @@
 
     {#if loading}
       <p class="muted">Loading…</p>
+    {:else if workspaces.length === 0}
+      <div class="card empty">
+        {#if isAdmin(session.me)}
+          <p><strong>Create your first workspace</strong></p>
+          <p class="muted">Workspaces hold your guides and decide who can see them, for example one per department.</p>
+          <p><button class="primary" onclick={newWorkspace}>Create workspace</button></p>
+        {:else}
+          <p><strong>You haven't been added to a workspace yet.</strong></p>
+          <p class="muted">Ask your administrator to add you. Guides will appear here once you are.</p>
+        {/if}
+      </div>
     {:else if guides.length === 0}
       <div class="card empty">
         <p><strong>No guides here yet.</strong></p>
         <p class="muted">
-          {#if canEdit}Create one with <em>New guide</em>, then paste or upload screenshots. The desktop recorder and browser extension will add guides here automatically.{:else if !wsId}Pick a workspace on the left.{:else}Nothing has been published here yet.{/if}
+          {#if canEdit}Create one with <em>New guide</em>, then paste or upload screenshots. The desktop recorder and browser extension will add guides here automatically.{:else}Nothing has been published here yet.{/if}
         </p>
       </div>
     {:else}
