@@ -136,6 +136,7 @@
     return () => {
       removeGuard();
       logoutIntent.pending = false;
+      logoutIntent.error = '';
       window.removeEventListener('paste', onPaste);
       window.removeEventListener('beforeunload', beforeUnload);
     };
@@ -309,23 +310,35 @@
   function guardLeave(to: string): boolean | Promise<boolean> {
     if (leaving || (autosave.state === 'saved' && !uploading && !conflict)) return true;
     return settle().then((ok) => {
-      if (!ok) leaveTo = to;
+      if (!ok) {
+        leaveTo = to;
+        // The confirm now belongs to this navigation, not to a pending sign-out.
+        if (to !== '/login') logoutIntent.pending = false;
+      }
       return ok;
     });
   }
 
-  function leaveAnyway() {
+  async function leaveAnyway() {
     const path = leaveTo;
+    if (path === '/login' && logoutIntent.pending) {
+      // Sign out for real; on failure stay here, signed in, with the error shown.
+      if (!(await completeLogout())) return;
+      leaveTo = '';
+      leaving = true;
+      autosave.stop();
+      return;
+    }
     leaveTo = '';
     leaving = true;
     autosave.stop();
-    if (logoutIntent.pending) void completeLogout();
-    else go(path);
+    go(path);
   }
 
   function stay() {
     leaveTo = '';
     logoutIntent.pending = false;
+    logoutIntent.error = '';
   }
 
   async function preview() {
@@ -464,7 +477,7 @@
     {/if}
     {#if leaveTo}
       <div class="callout warning banner" role="alertdialog" aria-label="Unsaved changes">
-        <span>Your latest changes are not saved. Leave anyway?</span>
+        <span>Your latest changes are not saved. Leave anyway?{#if logoutIntent.error} {logoutIntent.error}{/if}</span>
         <div class="row">
           <button type="button" class="small danger" onclick={leaveAnyway}>Leave without saving</button>
           <button type="button" class="small" onclick={stay}>Stay</button>

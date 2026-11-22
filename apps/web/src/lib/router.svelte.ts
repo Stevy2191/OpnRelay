@@ -81,6 +81,11 @@ export async function canLeave(path: string): Promise<boolean> {
   return !guard || path === route.path ? true : !!(await guard(path));
 }
 
+/** Navigate without asking the guard (it was already consulted). */
+export function goUnguarded(path: string) {
+  navigate(path);
+}
+
 /** Match `pattern` like `/guides/:id/edit` against the current path. */
 export function match(pattern: string, path: string): Record<string, string> | null {
   const p = pattern.split('/').filter(Boolean);

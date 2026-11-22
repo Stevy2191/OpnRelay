@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { canLeave, go } from './router.svelte';
+import { canLeave, goUnguarded } from './router.svelte';
 import { api, ApiError, setCsrf, type Branding, type GuideSummary, type Me, type Workspace } from './api';
 
 export const session = $state<{ me: Me | null; loading: boolean; branding: Branding | null }>({ me: null, loading: true, branding: null });
@@ -19,21 +19,31 @@ export async function refresh(): Promise<Me | null> {
   return session.me;
 }
 
-/** Set while a sign-out waits on the editor's leave-confirm; "Leave anyway" completes it, "Stay" cancels it. */
-export const logoutIntent = $state({ pending: false });
+/**
+ * Set while a sign-out waits on the editor's leave-confirm ("Leave anyway" completes it,
+ * "Stay" cancels it); `error` is set when the sign-out request failed.
+ */
+export const logoutIntent = $state({ pending: false, error: '' });
 
-/** Destroys the session and resets client state, then routes to /login (never while still signed in). */
-export async function completeLogout() {
-  logoutIntent.pending = false;
+/**
+ * Destroys the session, resets client state, then routes to /login (never while still
+ * signed in). If the request fails the user stays signed in and `error` is set; false.
+ */
+export async function completeLogout(): Promise<boolean> {
+  logoutIntent.error = '';
   try {
     await api('/auth/logout', { method: 'POST' });
-  } finally {
-    session.me = null;
-    workspacesStore.list = [];
-    workspacesStore.loaded = false;
-    workspacesStore.reviewCount = 0;
-    await go('/login');
+  } catch {
+    logoutIntent.error = 'Couldn’t sign out — check your connection and try again.';
+    return false;
   }
+  logoutIntent.pending = false;
+  session.me = null;
+  workspacesStore.list = [];
+  workspacesStore.loaded = false;
+  workspacesStore.reviewCount = 0;
+  goUnguarded('/login'); // the guard was already consulted
+  return true;
 }
 
 export async function logout() {

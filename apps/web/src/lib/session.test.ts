@@ -2,13 +2,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const calls: string[] = [];
+let failPost = false;
 let allow = true;
 vi.mock('./router.svelte', () => ({
   canLeave: async () => allow,
-  go: async (p: string) => (calls.push(`go ${p}`), true),
+  goUnguarded: (p: string) => void calls.push(`go ${p}`),
 }));
 vi.mock('./api', () => ({
-  api: async (p: string) => void calls.push(`api ${p}`),
+  api: async (p: string) => {
+    calls.push(`api ${p}`);
+    if (failPost) throw new Error('boom');
+  },
   ApiError: class extends Error {},
   setCsrf: () => {},
 }));
@@ -18,6 +22,8 @@ import { completeLogout, logout, logoutIntent, session, workspacesStore } from '
 beforeEach(() => {
   calls.length = 0;
   allow = true;
+  failPost = false;
+  logoutIntent.error = '';
   logoutIntent.pending = false;
   session.me = { id: 'u' } as never;
   workspacesStore.loaded = true;
@@ -41,5 +47,16 @@ describe('logout', () => {
     expect(calls).toEqual(['api /auth/logout', 'go /login']);
     expect(session.me).toBeNull();
     expect(logoutIntent.pending).toBe(false);
+  });
+  it('stays signed in, does not route, and reports an error when the POST fails', async () => {
+    failPost = true;
+    await logout();
+    expect(calls).toEqual(['api /auth/logout']);
+    expect(session.me).not.toBeNull();
+    expect(workspacesStore.reviewCount).toBe(3);
+    expect(logoutIntent.error).toMatch(/sign out/);
+    failPost = false;
+    expect(await completeLogout()).toBe(true);
+    expect(logoutIntent.error).toBe('');
   });
 });

@@ -3,7 +3,7 @@
   import { onMount, type Snippet } from 'svelte';
   import { api } from './api';
   import { route, query, match, go } from './router.svelte';
-  import { session, logout, isAdmin, canAudit, workspacesStore, shellUi } from './session.svelte';
+  import { session, logout, isAdmin, canAudit, workspacesStore, shellUi, logoutIntent } from './session.svelte';
   import { errorText } from './format';
   import RecordPanel from './RecordPanel.svelte';
 
@@ -232,6 +232,9 @@
       </div>
     </header>
     <main id="main-content" tabindex="-1">
+      {#if logoutIntent.error && !logoutIntent.pending}
+        <p class="error" role="alert">{logoutIntent.error} <button type="button" class="small" onclick={() => (logoutIntent.error = '')}>Dismiss</button></p>
+      {/if}
       {@render children()}
     </main>
   </div>
