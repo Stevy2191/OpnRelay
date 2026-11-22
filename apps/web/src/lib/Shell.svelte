@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
-  import { api, type GuideSummary } from './api';
+  import { api } from './api';
   import { route, query, match, go } from './router.svelte';
   import { session, logout, isAdmin, canAudit, workspacesStore, shellUi } from './session.svelte';
   import { errorText } from './format';
@@ -20,31 +20,40 @@
   let adminTab = $derived(params.get('tab') ?? '');
 
   let canEditSomewhere = $derived(isAdmin(me) || workspacesStore.list.some((w) => w.my_permission === 'edit' || w.my_permission === 'manage'));
-  let reviewCount = $state(0);
-
-  async function loadReviewCount() {
-    if (!canEditSomewhere) return;
-    try {
-      reviewCount = (await api<GuideSummary[]>('/guides?needs_review=true')).length;
-    } catch {
-      reviewCount = 0;
-    }
-  }
+  let reviewCount = $derived(workspacesStore.reviewCount);
 
   onMount(() => {
     workspacesStore.refresh().catch(() => {});
   });
-  // Refresh the review count when the list of workspaces or the route changes.
+  // Refetch the review count only when the workspace list or the page changes
+  // (not the query string), and after guides are reviewed/published.
   $effect(() => {
     void workspacesStore.list;
-    void route.path;
-    loadReviewCount();
+    void path;
+    workspacesStore.refreshReviewCount();
   });
 
   // Close the drawer on navigation.
   $effect(() => {
     void route.path;
     shellUi.drawer = false;
+  });
+
+  // Phone drawer: focus moves in when it opens and back to the menu button when it closes.
+  let menuBtn: HTMLButtonElement | undefined = $state();
+  let sidebarEl: HTMLElement | undefined = $state();
+  let drawerWasOpen = false;
+  $effect(() => {
+    const open = shellUi.drawer;
+    if (open === drawerWasOpen) return;
+    drawerWasOpen = open;
+    if (!menuBtn || menuBtn.offsetParent === null) return; // wide layout: sidebar is always visible
+    if (open) {
+      queueMicrotask(() => sidebarEl?.querySelector<HTMLElement>('.sb-nav a')?.focus());
+    } else {
+      const a = document.activeElement;
+      if (!a || a === document.body || sidebarEl?.contains(a)) menuBtn.focus();
+    }
   });
 
   // Search box mirrors the query.
@@ -133,7 +142,7 @@
     <div class="backdrop" onclick={() => (shellUi.drawer = false)}></div>
   {/if}
 
-  <aside class="sidebar" class:open={shellUi.drawer} id="sidebar" aria-label="Main">
+  <aside bind:this={sidebarEl} class="sidebar" class:open={shellUi.drawer} id="sidebar" aria-label="Main">
     <a class="sb-brand" href="#/" title={me.organization.name}>
       {#if session.branding?.logo_media_id}
         <img class="logo" src={`/api/v1/media/${session.branding.logo_media_id}`} alt="" />
@@ -199,7 +208,7 @@
 
   <div class="col">
     <header class="topbar">
-      <button class="ghost menu" aria-label="Open menu" aria-controls="sidebar" aria-expanded={shellUi.drawer} onclick={() => (shellUi.drawer = !shellUi.drawer)}>
+      <button bind:this={menuBtn} class="ghost menu" aria-label="Open menu" aria-controls="sidebar" aria-expanded={shellUi.drawer} onclick={() => (shellUi.drawer = !shellUi.drawer)}>
         <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
       </button>
       <form class="search" onsubmit={submitSearch} role="search">

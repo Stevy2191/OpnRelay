@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { api, ApiError, type Folder, type Guide, type Step, type StepKind } from '../lib/api';
   import { go } from '../lib/router.svelte';
+  import { workspacesStore } from '../lib/session.svelte';
   import { errorText, when } from '../lib/format';
   import Screenshot from '../lib/Screenshot.svelte';
 
@@ -152,6 +153,7 @@
     const note = prompt('Optional note for this version (what changed?)', '') ?? '';
     try {
       guide = await api<Guide>(`/guides/${id}/publish`, { body: { note }, ifMatch: guide!.revision });
+      workspacesStore.refreshReviewCount();
       versions = await api(`/guides/${id}/versions`);
       message = `Published version ${guide.current_version}`;
     } catch (e) {

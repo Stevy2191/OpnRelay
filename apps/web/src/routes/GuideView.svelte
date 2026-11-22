@@ -2,6 +2,7 @@
 <script lang="ts">
   import { api, exportUrl, type Guide } from '../lib/api';
   import { go } from '../lib/router.svelte';
+  import { workspacesStore } from '../lib/session.svelte';
   import { errorText, dateTime, miniMarkdown } from '../lib/format';
   import Screenshot from '../lib/Screenshot.svelte';
 
@@ -22,6 +23,7 @@
     reviewNotice = error = '';
     try {
       guide = await api<Guide>(`/guides/${id}/reviewed`, { body: {} });
+      workspacesStore.refreshReviewCount();
       reviewNotice = 'Marked as reviewed';
     } catch (e) {
       error = errorText(e);

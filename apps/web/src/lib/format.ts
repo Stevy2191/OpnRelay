@@ -43,3 +43,18 @@ export function miniMarkdown(src: string): string {
     })
     .join('');
 }
+
+/** Up to two initials for an avatar: "Ada Lovelace" -> "AL", "ada@x.test" -> "A". */
+export function initials(name: string | null | undefined): string {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+}
+
+/** Whole months a review has been overdue (0 when under a month or not due). */
+export function monthsOverdue(dueIso: string | null | undefined, now: number = Date.now()): number {
+  if (!dueIso) return 0;
+  const days = (now - new Date(dueIso).getTime()) / 86400000;
+  return days >= 30 ? Math.floor(days / 30) : 0;
+}

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { api, ApiError, setCsrf, type Branding, type Me, type Workspace } from './api';
+import { api, ApiError, setCsrf, type Branding, type GuideSummary, type Me, type Workspace } from './api';
 
 export const session = $state<{ me: Me | null; loading: boolean; branding: Branding | null }>({ me: null, loading: true, branding: null });
 
@@ -39,14 +39,36 @@ export async function loadBranding() {
 }
 
 /** Workspace list shared by the shell sidebar and Home; fetched once, refreshed after changes. */
-export const workspacesStore = $state<{ list: Workspace[]; loaded: boolean; refresh: () => Promise<void> }>({
+export const workspacesStore = $state<{
+  list: Workspace[];
+  loaded: boolean;
+  /** Guides awaiting review in workspaces the user can edit (sidebar badge, All guides summary). */
+  reviewCount: number;
+  refresh: () => Promise<void>;
+  refreshReviewCount: () => Promise<void>;
+}>({
   list: [],
   loaded: false,
+  reviewCount: 0,
   async refresh() {
     try {
       workspacesStore.list = await api<Workspace[]>('/workspaces');
     } finally {
       workspacesStore.loaded = true;
+    }
+  },
+  /** Call after a guide is marked reviewed or published; the shell also calls it when workspaces or the page change. */
+  async refreshReviewCount() {
+    const canEdit =
+      isAdmin(session.me) || workspacesStore.list.some((w) => w.my_permission === 'edit' || w.my_permission === 'manage');
+    if (!canEdit) {
+      workspacesStore.reviewCount = 0;
+      return;
+    }
+    try {
+      workspacesStore.reviewCount = (await api<GuideSummary[]>('/guides?needs_review=true')).length;
+    } catch {
+      workspacesStore.reviewCount = 0;
     }
   },
 });

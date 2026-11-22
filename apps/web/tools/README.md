@@ -1,7 +1,7 @@
 # UI screenshot tool
 
 `ui-shots.mjs` seeds a throwaway OpnRelay server (owner, editor, viewer, three
-workspaces with folders, six guides including a 120-character title, a guide
+workspaces with folders, eight guides including a 120-character title, a guide
 without screenshots and one flagged needs-review) and saves
 `NAME-light-desktop.png`, `NAME-dark-desktop.png` and `NAME-light-phone.png`
 (390x844) for each page. Seeding is idempotent: re-running reuses existing data.
@@ -42,7 +42,7 @@ Options:
 
 - `--owner-link` / `--owner-token`: the one-time link/token from `create-owner` (only needed the first time).
 - `--owner-email` (default `owner@example.com`), `--password` (default `Shots-Passw0rd-123!`, used for all three users).
-- `--pages home,guide,edit,admin,...`: subset of `login home folder guide guide-empty edit admin account audit downloads ws-settings`.
+- `--pages home,guide,edit,admin,...`: subset of `login home all-guides folder ws-cards ws-list ws-empty drafts review search search-none guide guide-empty edit admin account audit downloads ws-settings`.
 - `--database-url`: lets the tool backdate the needs-review guide with `psql`. Without it, the command is printed.
 
 ## 3. Clean up

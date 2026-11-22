@@ -89,6 +89,8 @@ export interface GuideSummary {
   reviewed_at: string | null;
   review_due_at: string | null;
   needs_review: boolean;
+  /** Screenshot of the first step that has one, for card thumbnails. */
+  thumb_media_id: string | null;
 }
 
 export interface Guide extends GuideSummary {

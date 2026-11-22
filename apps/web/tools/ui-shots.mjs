@@ -29,7 +29,7 @@ const base = (args.base ?? 'http://127.0.0.1:8092').replace(/\/$/, '');
 const out = args.out ?? './ui-shots';
 const password = args.password ?? 'Shots-Passw0rd-123!';
 const ownerEmail = args['owner-email'] ?? 'owner@example.com';
-const ALL_PAGES = ['login', 'home', 'folder', 'guide', 'guide-empty', 'edit', 'admin', 'account', 'audit', 'downloads', 'ws-settings'];
+const ALL_PAGES = ['login', 'home', 'all-guides', 'folder', 'ws-cards', 'ws-list', 'ws-empty', 'drafts', 'review', 'search', 'search-none', 'guide', 'guide-empty', 'edit', 'admin', 'account', 'audit', 'downloads', 'ws-settings'];
 const pages = args.pages ? args.pages.split(',').map((s) => s.trim()) : ALL_PAGES;
 const ownerToken = args['owner-token'] ?? (args['owner-link'] ? args['owner-link'].split('/invite/')[1] : undefined);
 
@@ -103,7 +103,8 @@ const LONG_TITLE = 'How to reconcile the quarterly vendor invoices against purch
 const WORKSPACES = [
   { name: 'Human Resources & Benefits Administration', description: 'Onboarding, offboarding and benefits enrolment.', folders: ['Onboarding', 'Offboarding and exit interviews for contractors and fixed-term staff', 'Benefits'] },
   { name: 'IT Helpdesk', description: 'Day-to-day support procedures.', folders: ['Accounts', 'Hardware'] },
-  { name: 'Finance', description: 'Month-end and AP procedures.', folders: ['Month-end'] },
+  { name: 'Finance', description: 'Month-end and AP procedures.', folders: ['Month-end', 'Accounts payable', 'Quarter and year-end close for subsidiaries and joint ventures'] },
+  { name: 'Legal', description: '', folders: [] },
 ];
 // [workspace index, folder index|null, title, kind]
 const GUIDES = [
@@ -113,6 +114,8 @@ const GUIDES = [
   [1, null, 'Set up two-factor authentication on a phone', 'noshots'],
   [2, 0, LONG_TITLE, 'long'],
   [2, null, 'Approve an expense report', 'review'],
+  [2, 1, 'Match a supplier invoice to its purchase order', 'normal'],
+  [2, null, 'Close the books checklist', 'noshots'],
 ];
 
 function stepsFor(kind, mediaIds) {
@@ -232,6 +235,14 @@ async function shoot(browser, data) {
   const targets = {
     login: { anon: true, path: '/login' },
     home: { path: '/' },
+    'all-guides': { path: '/' },
+    'ws-cards': { path: `/?ws=${data.ws[2].id}`, view: 'cards' },
+    'ws-list': { path: `/?ws=${data.ws[2].id}`, view: 'list' },
+    'ws-empty': { path: `/?ws=${data.ws[3].id}`, view: 'cards' },
+    drafts: { path: '/?status=draft' },
+    review: { path: '/?needs_review=true' },
+    search: { path: '/?q=invoice' },
+    'search-none': { path: '/?q=zzzzqx' },
     folder: { path: `/?ws=${data.ws[0].id}&folder=${data.ws[0].folders[0].id}` },
     guide: { path: `/guides/${normal.id}` },
     'guide-empty': { path: `/guides/${byKind('noshots').id}` },
@@ -245,8 +256,9 @@ async function shoot(browser, data) {
   for (const [scheme, form, viewport] of THEMES) {
     const ctx = await browser.newContext({ viewport, colorScheme: scheme, deviceScaleFactor: form === 'phone' ? 2 : 1 });
     const anon = await ctx.newPage();
-    const snap = async (p, name, path) => {
+    const snap = async (p, name, path, view) => {
       await p.goto(`${base}/#${path}`);
+      if (view) await p.evaluate((v) => localStorage.setItem('runbook.workspace-view', v), view);
       await p.reload();
       await p.waitForLoadState('networkidle');
       await p.waitForTimeout(400);
@@ -263,7 +275,7 @@ async function shoot(browser, data) {
       const authed = await ctx.newPage();
       for (const name of pages) {
         if (!targets[name]) console.warn('unknown page', name);
-        else if (!targets[name].anon) await snap(authed, name, targets[name].path);
+        else if (!targets[name].anon) await snap(authed, name, targets[name].path, targets[name].view);
       }
     }
     await ctx.close();

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { miniMarkdown } from './format';
+import { initials, miniMarkdown, monthsOverdue } from './format';
 
 describe('miniMarkdown', () => {
   it('escapes HTML so step text cannot inject markup', () => {
@@ -22,5 +22,22 @@ describe('miniMarkdown', () => {
     // Only bare tags we generate; nothing with attributes and no anchors.
     expect(out).not.toMatch(/<[a-z]+\s/i);
     expect(out).not.toContain('<a');
+  });
+});
+
+describe('initials', () => {
+  it('uses first and last word', () => {
+    expect(initials('Ada Byron Lovelace')).toBe('AL');
+    expect(initials('ada')).toBe('A');
+    expect(initials(null)).toBe('?');
+  });
+});
+
+describe('monthsOverdue', () => {
+  const now = Date.parse('2026-11-22T00:00:00Z');
+  it('counts whole 30-day months', () => {
+    expect(monthsOverdue('2026-11-10T00:00:00Z', now)).toBe(0);
+    expect(monthsOverdue('2026-08-20T00:00:00Z', now)).toBe(3);
+    expect(monthsOverdue(null, now)).toBe(0);
   });
 });
