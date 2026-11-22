@@ -128,7 +128,7 @@
               <select value={u.org_role} disabled={self || locked || u.role_source === 'idp'} onchange={(e) => update(u, { org_role: (e.currentTarget as HTMLSelectElement).value })} aria-label="Role">
                 {#each roles as r}{#if r !== 'owner' || isOwner || u.org_role === 'owner'}<option value={r}>{r}</option>{/if}{/each}
               </select>
-              {#if u.role_source === 'idp'}<br /><span class="muted small">Set by Microsoft group {u.role_from}</span>{/if}
+              {#if u.role_source === 'idp'}<br /><span class="muted small">{u.role_from ? `Set by Microsoft group ${u.role_from}` : 'Set by Microsoft groups: member'}</span>{/if}
             </td>
             <td><span class="badge">{u.status}</span></td>
             <td>{u.mfa_enabled ? '✅' : '—'}</td>

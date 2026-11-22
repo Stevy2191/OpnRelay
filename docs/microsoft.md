@@ -71,7 +71,9 @@ minutes to show up in OpnRelay.
 someone is in several groups, the highest role wins. Owners are never changed.
 While any mapping exists, the roles of Microsoft-linked people are set by Microsoft
 and locked in the *Users* tab. When you remove the last mapping, they go back to
-manual management and keep their current role. Before you save a mapping, the
+manual management and keep their current role. The same happens when you unlink the
+last group that grants a role: its members keep their current role and become
+manually managed. Before you save a mapping, the
 confirmation shows how many people will change role.
 
 **Leavers.** If a person's Microsoft account is disabled or deleted (none of their
@@ -84,7 +86,8 @@ people, whether disabled by an admin or by Microsoft, are not members of Microso
 groups until they are re-enabled.
 
 **Safety brake.** If one run would disable more than 10 people *and* more than 20%
-of Microsoft-linked people, it disables no one and shows a banner. This usually
+of Microsoft-linked people, it disables no one and shows a banner. Memberships and
+roles keep syncing; only disabling accounts is on hold. This usually
 means something is wrong in Microsoft (for example, a bulk change). Check Microsoft
 first. An admin can then confirm that one run, and only up to the number shown.
 
@@ -95,6 +98,9 @@ first. An admin can then confirm that one run, and only up to the number shown.
   Renew the secret and run **Sync now**.
 - If a group is deleted in Microsoft, it is emptied and shown in red so you can
   unlink it.
+- If Microsoft finds none of the linked accounts, or (with two or more linked groups)
+  none of the linked groups, the run is treated as a failure and nothing changes:
+  this usually means the wrong tenant or directory. Check the tenant ID.
 - If you turn group sync off, linked groups are frozen and show "Not syncing".
 
 ## 4. OneDrive backups

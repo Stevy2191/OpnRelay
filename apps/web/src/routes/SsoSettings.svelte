@@ -123,7 +123,7 @@
         {#if stale}<p class="warning" role="status">No successful sync for over 24 hours.</p>{/if}
         {#if s.group_sync_brake_pending}
           <div class="warning" role="alert">
-            <p>The sync paused itself: it would disable {s.group_sync_brake_pending} people. That is a lot at once, so check Microsoft before going ahead.</p>
+            <p>Disabling accounts is on hold: the sync would disable {s.group_sync_brake_pending} people. That is a lot at once, so check Microsoft before going ahead. Memberships and roles keep syncing in the meantime.</p>
             <button class="danger" disabled={syncing} onclick={() => syncNow(true)}>Disable {s.group_sync_brake_pending} people</button>
           </div>
         {/if}

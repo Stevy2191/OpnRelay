@@ -160,7 +160,7 @@
         {#if status.group_sync_last_warning}<p class="warning" role="status">{status.group_sync_last_warning}</p>{/if}
         {#if stale}<p class="warning" role="status">No successful sync for over 24 hours.</p>{/if}
         {#if status.group_sync_brake_pending}
-          <p class="warning" role="status">Sync is paused: it would disable {status.group_sync_brake_pending} people. Review this on the Microsoft sign-in tab.</p>
+          <p class="warning" role="status">Disabling accounts is on hold: the sync would disable {status.group_sync_brake_pending} people. Memberships and roles keep syncing. Review this on the Microsoft sign-in tab.</p>
         {/if}
       </div>
       <button class="small" disabled={syncing} onclick={syncNow}>{syncing ? 'Syncing…' : 'Sync now'}</button>
@@ -220,7 +220,7 @@
         {#if !syncOn}<span class="badge">Not syncing</span>{:else if g.last_synced_at}Last synced {dateTime(g.last_synced_at)}.{/if}
       </p>
       {#if g.missing_since}
-        <p class="error" role="alert">Deleted in Microsoft. Members are kept until you unlink this group.</p>
+        <p class="error" role="alert">Deleted in Microsoft. Its members were removed; unlink this group.</p>
       {/if}
       <label class="inline small">Also make members:
         <select
@@ -247,7 +247,7 @@
           <span>
             Unlink {g.name}?
             {#if wsLookupFailed}Couldn't load the workspaces this group is on. Its members may lose access they get only through this group.{:else if wss.length}It will lose access to {wss.join(', ')} and its members will lose access they get only through this group.{:else}Its members will lose access they get only through this group.{/if}
-            {#if g.grants_role}People who are {g.grants_role} only through this group go back to member.{/if}
+            {#if g.grants_role}{#if groups.filter((x) => x.source === 'idp' && x.grants_role).length === 1}This is the last group that grants roles: its members keep their current role and become manually managed.{:else}People who are {g.grants_role} only through this group go back to member.{/if}{/if}
           </span>
           <span class="row">
             <button class="small danger" onclick={() => unlink(g)}>Unlink</button>
