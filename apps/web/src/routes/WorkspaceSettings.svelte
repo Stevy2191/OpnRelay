@@ -146,7 +146,7 @@
         <tbody>
           {#each members as m (m.principal_id)}
             <tr>
-              <td data-label="Person or group" ><div class="c-who">{#if m.principal_type === 'group'}<span class="gico" title="Group"><PeopleIcon /></span>{/if}<span>{m.name ?? m.principal_id}</span></div></td>
+              <td data-label="Person or group"><div class="c-who">{#if m.principal_type === 'group'}<span class="gico" title="Group"><PeopleIcon /></span>{/if}<span>{m.name ?? m.principal_id}</span></div></td>
               <td data-label="Role">
                 <select value={m.role} aria-label="Role" onchange={(e) => saveMembers(members.map((x) => (x.principal_id === m.principal_id ? { ...x, role: (e.currentTarget as HTMLSelectElement).value as Member['role'] } : x)))}>
                   <option value="viewer">Viewer</option><option value="editor">Editor</option><option value="manager">Manager</option>

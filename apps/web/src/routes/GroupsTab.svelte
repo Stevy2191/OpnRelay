@@ -234,6 +234,7 @@
 {#if groups.length === 0}
   <div class="card"><p class="muted">No groups yet.</p></div>
 {:else}
+  <div class="table-wrap">
   <table class="data stackable groups">
     <thead><tr><th>Group</th><th>Members</th><th>Opens workspaces</th><th>Grants role</th><th>Last synced</th><th>Actions</th></tr></thead>
     {#each groups as g (g.id)}
@@ -329,6 +330,7 @@
       </tbody>
     {/each}
   </table>
+  </div>
 {/if}
 
 <style>
@@ -346,6 +348,11 @@
   .c-name { display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem 0.5rem; }
   .role-select { width: auto; min-width: 6.5rem; font-family: var(--font-mono); font-size: 0.8rem; text-transform: uppercase; padding: 0.2rem 0.4rem; }
   table.groups tbody + tbody tr:first-child td { border-top: 1px solid var(--line); }
+  @media (max-width: 720px) {
+    table.groups tbody { padding: 0.25rem 0 0.5rem; border-top: 6px solid var(--surface-2); }
+    table.groups tbody:first-of-type { border-top: 0; }
+    table.groups tbody tr { border-bottom: 0; }
+  }
   tr.detail td { padding-top: 0; }
   tr.detail td:empty { display: none; }
   tr.detail :global(.callout) { margin-bottom: 0.5rem; }

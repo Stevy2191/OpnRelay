@@ -71,14 +71,14 @@
     <tbody>
       {#each events as e (e.seq)}
         <tr>
-          <td class="mono small muted" data-label="#">{e.seq}</td>
-          <td class="mono small time" data-label="Time">{dateTime(e.ts)}</td>
-          <td class="small" data-label="Who">{e.actor_label}<br /><span class="muted mono">{e.actor_ip ?? ''}</span></td>
-          <td data-label="Action"><code class="act">{e.action}</code></td>
-          <td class="small" data-label="Target">
+          <td class="mono small muted">{e.seq}</td>
+          <td class="mono small time">{dateTime(e.ts)}</td>
+          <td class="small">{e.actor_label}<br /><span class="muted mono">{e.actor_ip ?? ''}</span></td>
+          <td><code class="act">{e.action}</code></td>
+          <td class="small">
             {#if e.target_type === 'guide' && e.target_id}<a href={`#/guides/${e.target_id}`}>guide</a>{:else}{e.target_type}{/if}
           </td>
-          <td class="small details" data-label={Object.keys(e.metadata).length ? 'Details' : undefined}>{Object.keys(e.metadata).length ? JSON.stringify(e.metadata) : ''}</td>
+          <td class="small details">{Object.keys(e.metadata).length ? JSON.stringify(e.metadata) : ''}</td>
         </tr>
       {/each}
     </tbody>

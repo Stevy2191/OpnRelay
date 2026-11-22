@@ -140,6 +140,7 @@
     <p class="muted small">Members see only workspaces they are added to. Auditors can read every guide and the audit log but cannot change anything. Admins manage everything.</p>
   </form>
 
+  <div class="table-wrap users-wrap">
   <table class="data stackable users">
     <thead><tr><th>Person</th><th>Role</th><th>Status</th><th>2FA</th><th>Last sign-in</th><th>Actions</th></tr></thead>
     <tbody>
@@ -190,6 +191,7 @@
       {/each}
     </tbody>
   </table>
+  </div>
 {:else if tab === 'groups'}
   <GroupsTab {users} {groups} {run} />
 {:else if tab === 'branding'}
@@ -237,7 +239,7 @@
   .role-select { width: auto; min-width: 6.5rem; font-family: var(--font-mono); font-size: 0.8rem; text-transform: uppercase; padding: 0.2rem 0.4rem; }
   .c-person strong { overflow-wrap: anywhere; }
   .confirm { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem 1rem; flex-wrap: wrap; padding: 0.4rem 0.6rem; font-size: 0.9rem; }
-  table.users { margin-top: 1rem; }
+  .users-wrap { margin-top: 1rem; }
   @media (min-width: 721px) { .users td:last-child { min-width: 13rem; } }
   .linkbox { margin: 1rem 0; display: flex; gap: 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .linkbox code { word-break: break-all; }
