@@ -279,7 +279,7 @@ async fn period_off_and_shorter() {
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
 
     let meta: Value = sqlx::query_scalar(
-        "SELECT metadata FROM audit_events WHERE action = 'workspace.updated' ORDER BY seq LIMIT 1",
+        "SELECT metadata FROM audit_events WHERE action = 'workspace.updated' AND metadata ? 'review_period_days' ORDER BY seq LIMIT 1",
     )
     .fetch_one(&f.app.db)
     .await
@@ -293,5 +293,25 @@ async fn new_workspace_defaults_to_90() {
     let f = setup().await;
     let ws = json(f.owner.get(&format!("/workspaces/{}", f.ws)).await).await;
     assert_eq!(ws["review_period_days"], 90);
+    f.app.cleanup().await;
+}
+
+#[tokio::test]
+async fn needs_review_filter_only_for_editors_ordered_by_due() {
+    let f = setup().await;
+    let a = new_guide(&f.owner, f.ws, true).await;
+    let b = new_guide(&f.owner, f.ws, true).await;
+    let c = new_guide(&f.owner, f.ws, true).await;
+    age(&f.app, a, 100).await;
+    age(&f.app, b, 200).await;
+    // c stays fresh.
+    let _ = c;
+    assert_eq!(flagged_ids(&f.viewer).await, Vec::<String>::new());
+    let (auditor, _) = f.app.user(&f.owner, "aud@acme.test", "auditor").await;
+    assert_eq!(flagged_ids(&auditor).await, Vec::<String>::new());
+    // Oldest due first.
+    let want = vec![b.to_string(), a.to_string()];
+    assert_eq!(flagged_ids(&f.editor).await, want);
+    assert_eq!(flagged_ids(&f.owner).await, want);
     f.app.cleanup().await;
 }

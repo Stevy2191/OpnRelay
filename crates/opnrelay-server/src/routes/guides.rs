@@ -65,20 +65,28 @@ pub struct GuideSummary {
 }
 
 /// When a published guide is next due for review (NULL if it never is).
-/// Needs the `g` (guides) and `w` (workspaces) aliases.
-const REVIEW_DUE_SQL: &str =
-    "(CASE WHEN g.status = 'published' AND w.review_period_days IS NOT NULL
-        THEN g.reviewed_at + make_interval(days => w.review_period_days) END)";
+/// Needs the `g` (guides) and `w` (workspaces) aliases. A macro so that it can
+/// be spliced into `concat!` for the column list as well as the filter.
+macro_rules! review_due_sql {
+    () => {
+        "(CASE WHEN g.status = 'published' AND w.review_period_days IS NOT NULL
+        THEN g.reviewed_at + make_interval(days => w.review_period_days) END)"
+    };
+}
 
 /// Needs the `g` (guides) and `w` (workspaces) aliases; also join `users u`.
-const SUMMARY_COLS: &str = "g.id, g.workspace_id, g.folder_id, g.title, g.description, g.status, g.classification,
+const SUMMARY_COLS: &str = concat!(
+    "g.id, g.workspace_id, g.folder_id, g.title, g.description, g.status, g.classification,
     g.source, g.revision, g.current_version, g.tags, g.legal_hold, g.created_by, u.display_name AS author_name,
     (SELECT count(*) FROM steps s WHERE s.guide_id = g.id AND s.kind = 'action') AS step_count,
     g.created_at, g.updated_at, g.published_at, g.reviewed_at,
-    (CASE WHEN g.status = 'published' AND w.review_period_days IS NOT NULL
-        THEN g.reviewed_at + make_interval(days => w.review_period_days) END) AS review_due_at,
-    COALESCE((CASE WHEN g.status = 'published' AND w.review_period_days IS NOT NULL
-        THEN g.reviewed_at + make_interval(days => w.review_period_days) END) < now(), false) AS needs_review";
+    ",
+    review_due_sql!(),
+    " AS review_due_at,
+    COALESCE(",
+    review_due_sql!(),
+    " < now(), false) AS needs_review"
+);
 
 #[derive(Deserialize)]
 struct ListQuery {
@@ -124,7 +132,22 @@ async fn list(
         qb.push(" AND g.status <> 'archived'");
     }
     if q.needs_review == Some(true) {
-        qb.push(format!(" AND {REVIEW_DUE_SQL} < now()"));
+        // Only workspaces where the caller can act on the flag (edit or
+        // manage): admins and owners everywhere, members as editor/manager.
+        qb.push(concat!(" AND ", review_due_sql!(), " < now()"));
+        if a.role == authz::OrgRole::Member {
+            qb.push(
+                " AND EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = w.id
+                  AND wm.role IN ('editor', 'manager') AND (
+                    (wm.principal_type = 'user' AND wm.principal_id = ",
+            );
+            qb.push_bind(a.user_id);
+            qb.push(") OR (wm.principal_type = 'group' AND wm.principal_id IN (SELECT group_id FROM group_members WHERE user_id = ");
+            qb.push_bind(a.user_id);
+            qb.push("))))");
+        } else if !a.role.is_admin() {
+            qb.push(" AND false");
+        }
     }
     let search = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     if let Some(term) = search {
@@ -145,6 +168,8 @@ async fn list(
         qb.push(" ORDER BY ts_rank(g.search, websearch_to_tsquery('english', ")
             .push_bind(term.to_string())
             .push(")) DESC, g.updated_at DESC");
+    } else if q.needs_review == Some(true) {
+        qb.push(concat!(" ORDER BY ", review_due_sql!(), " ASC, g.id"));
     } else {
         qb.push(" ORDER BY g.updated_at DESC");
     }
@@ -718,20 +743,20 @@ async fn mark_reviewed(
     let (perm, _) = authz::guide_perm(&st.db, &a, id).await?;
     perm.require(Perm::Edit)?;
     let mut tx = st.db.begin().await?;
-    audit::lock(&mut tx).await?;
-    let status: String = sqlx::query_scalar("SELECT status FROM guides WHERE id = $1 FOR UPDATE")
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
-    if status != "published" {
+    // Row lock first (via the UPDATE), then the audit lock inside
+    // `audit::record`: the same order as the rest of this file.
+    let updated: Option<Uuid> = sqlx::query_scalar(
+        "UPDATE guides SET reviewed_at = now()
+         WHERE id = $1 AND status = 'published' AND deleted_at IS NULL RETURNING id",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if updated.is_none() {
         return Err(ApiError::bad(
             "Only published guides can be marked as reviewed",
         ));
     }
-    sqlx::query("UPDATE guides SET reviewed_at = now() WHERE id = $1")
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
     audit::record(
         &mut tx,
         &a.audit(),

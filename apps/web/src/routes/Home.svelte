@@ -10,6 +10,7 @@
   let guides = $state<GuideSummary[]>([]);
   let error = $state('');
   let loading = $state(true);
+  let workspacesLoaded = $state(false);
 
   let params = $derived(query(route.path));
   let q = $derived(params.get('q') ?? '');
@@ -30,6 +31,7 @@
 
   async function loadWorkspaces() {
     workspaces = await api<Workspace[]>('/workspaces');
+    workspacesLoaded = true;
   }
 
   // Only editors of a guide's workspace (or admins) are shown the review flag.
@@ -39,8 +41,9 @@
     return !!w && (w.my_permission === 'edit' || w.my_permission === 'manage');
   }
   let flagged = $state<GuideSummary[]>([]);
-  let flaggedCount = $derived(flagged.filter(canEditGuide).length);
-  let shown = $derived(reviewOnly ? guides.filter((g) => g.needs_review && canEditGuide(g)) : guides);
+  // The server only returns flagged guides from workspaces the caller can edit.
+  let flaggedCount = $derived(flagged.length);
+  let shown = $derived(reviewOnly ? flagged : guides);
 
   async function loadGuides() {
     loading = true;
@@ -53,7 +56,7 @@
       const all = await api<GuideSummary[]>(`/guides?${p}`);
       guides = all;
       p.set('needs_review', 'true');
-      flagged = all.some((g) => g.needs_review) ? await api<GuideSummary[]>(`/guides?${p}`) : [];
+      flagged = await api<GuideSummary[]>(`/guides?${p}`);
       folders = wsId ? await api<Folder[]>(`/workspaces/${wsId}/folders`) : [];
     } catch (e) {
       error = errorText(e);
@@ -155,7 +158,7 @@
     {#if current?.description}<p class="muted">{current.description}</p>{/if}
     {#if error}<p class="error">{error}</p>{/if}
 
-    {#if loading}
+    {#if loading || !workspacesLoaded}
       <p class="muted">Loading…</p>
     {:else if workspaces.length === 0}
       <div class="card empty">
@@ -173,7 +176,7 @@
         <p class="review-bar"><a href={link(wsId, folderId)}>Clear “Needs review” filter</a></p>
       {/if}
       <div class="card empty">
-        <p><strong>No guides here yet.</strong></p>
+        <p><strong>{reviewOnly ? 'Nothing needs review' : 'No guides here yet.'}</strong></p>
         <p class="muted">
           {#if reviewOnly}No guides need review.{:else if canEdit}Create one with <em>New guide</em>, then paste or upload screenshots. The desktop recorder and browser extension will add guides here automatically.{:else}Nothing has been published here yet.{/if}
         </p>

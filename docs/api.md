@@ -53,12 +53,13 @@ served at `/api/v1/openapi.json` (authenticated). Errors use RFC 9457 Problem De
 ### Guides & steps
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/guides?workspace=&folder=&q=&status=&tag=` | search + filter |
+| GET | `/guides?workspace=&folder=&q=&status=&tag=&needs_review=true` | search + filter. `needs_review=true` returns only published guides past their workspace's review period, in workspaces where the caller can edit or manage (admins: all; viewers and auditors: none), oldest due first |
 | POST | `/guides` | empty or from template |
 | GET | `/guides/{id}` | guide + steps |
 | PATCH | `/guides/{id}` | metadata |
 | PUT | `/guides/{id}/steps` | full ordered step list (editor save), `If-Match` |
-| POST | `/guides/{id}/publish` | snapshot version |
+| POST | `/guides/{id}/publish` | snapshot version; also restarts the review clock |
+| POST | `/guides/{id}/reviewed` | "Still accurate": sets `reviewed_at = now()` on a published guide without a new version or revision bump; editor; audit `guide.reviewed` |
 | GET | `/guides/{id}/versions`, `/guides/{id}/versions/{v}` | |
 | POST | `/guides/{id}/versions/{v}/restore` | |
 | POST | `/guides/{id}/duplicate`, `/guides/{id}/move` | |

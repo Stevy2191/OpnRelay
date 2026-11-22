@@ -77,8 +77,9 @@
       return;
     }
     try {
-      ws = await api<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: { review_period_days: reviewOff ? null : reviewDays } });
-      syncReview(ws);
+      const saved = await api<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: { review_period_days: reviewOff ? null : reviewDays } });
+      if (ws) ws.review_period_days = saved.review_period_days;
+      syncReview(saved);
       notice = 'Review period saved';
     } catch (err) {
       reviewError = errorText(err);

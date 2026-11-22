@@ -77,6 +77,7 @@ erDiagram
 | id, org_id, name, slug | | |
 | policy_overrides | jsonb | e.g. capture modes allowed, retention |
 | legal_hold | bool | |
+| review_period_days | int null | guides not reviewed within this many days are flagged "needs review"; NULL = off; default 90 |
 
 **workspace_members**: `workspace_id, principal_type (user|group), principal_id, role (manager|editor|viewer)`
 
@@ -97,6 +98,7 @@ erDiagram
 | search | tsvector | generated from title/description/step text |
 | legal_hold | bool | |
 | created_by, updated_by | uuid | |
+| reviewed_at | timestamptz | last publish or "Still accurate"; with the workspace period gives `review_due_at` / `needs_review` (computed, not stored) |
 | created_at, updated_at, published_at, deleted_at | | |
 
 **steps**
