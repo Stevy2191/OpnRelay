@@ -92,6 +92,7 @@ label.inline { display: flex; align-items: center; gap: 0.5rem; font-weight: 400
 .badge { display: inline-block; font-size: 0.75rem; padding: 0.05rem 0.5rem; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
 .badge.published { color: var(--ok); }
 .badge.draft { color: var(--accent); }
+.badge.review { color: #b45309; border-color: #f59e0b; background: color-mix(in srgb, #f59e0b 15%, var(--surface)); font-weight: 600; }
 .badge.confidential, .badge.restricted { color: var(--danger); }
 
 table { width: 100%; border-collapse: collapse; }

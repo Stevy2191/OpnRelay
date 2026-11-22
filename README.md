@@ -55,6 +55,7 @@ See [docs/deployment.md](docs/deployment.md). Microsoft sign-in and OneDrive bac
 - Accounts: email + password with **MFA (TOTP)**, **Sign in with Microsoft (Entra ID)**, teams and roles, and a dedicated **Auditor** role
 - **Backups**: daily, encrypted, kept on the server and copied to **OneDrive**, with a one-command restore
 - Tamper-evident audit log, retention policies, legal hold
+- **Needs-review flag**: guides not reviewed within the workspace's review period (default 90 days) are flagged for editors, who can confirm with one click ("Still accurate")
 
 ## Documentation
 

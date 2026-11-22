@@ -14,6 +14,13 @@
   let error = $state('');
   let notice = $state('');
   let pick = $state('');
+  let reviewDays = $state(90);
+  let reviewOff = $state(false);
+  let reviewError = $state('');
+  function syncReview(w: Workspace) {
+    reviewOff = w.review_period_days === null;
+    reviewDays = w.review_period_days ?? 90;
+  }
   let pickRole = $state<Member['role']>('viewer');
 
   async function load() {
@@ -23,6 +30,7 @@
         api<Member[]>(`/workspaces/${id}/members`),
         api<User[]>('/admin/users'),
       ]);
+      syncReview(ws);
       groups = await api<Group[]>('/admin/groups');
     } catch (e) {
       error = errorText(e);
@@ -61,6 +69,22 @@
     }
   }
 
+  async function saveReview(e: Event) {
+    e.preventDefault();
+    error = notice = reviewError = '';
+    if (!reviewOff && (!Number.isInteger(reviewDays) || reviewDays < 1 || reviewDays > 3650)) {
+      reviewError = 'Enter a whole number of days between 1 and 3650, or choose Off.';
+      return;
+    }
+    try {
+      ws = await api<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: { review_period_days: reviewOff ? null : reviewDays } });
+      syncReview(ws);
+      notice = 'Review period saved';
+    } catch (err) {
+      reviewError = errorText(err);
+    }
+  }
+
   async function setHold(on: boolean) {
     try {
       ws = await api<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: { legal_hold: on } });
@@ -95,6 +119,19 @@
     <form class="card" onsubmit={saveInfo}>
       <label for="n">Name</label><input id="n" bind:value={ws.name} required />
       <label for="d">Description</label><textarea id="d" bind:value={ws.description} rows="2"></textarea>
+      <p><button class="primary" type="submit">Save</button></p>
+    </form>
+
+    <form class="card" onsubmit={saveReview} novalidate>
+      <h2>Review</h2>
+      <div class="row">
+        <label for="rd" class="inline">Review guides every</label>
+        <input id="rd" type="number" min="1" max="3650" step="1" bind:value={reviewDays} disabled={reviewOff} style="width:6rem" />
+        <span>days</span>
+        <label class="inline"><input type="checkbox" bind:checked={reviewOff} /> Off</label>
+      </div>
+      <p class="muted small">Published guides not reviewed within this time are flagged “Needs review” for editors. Publishing a new version or choosing “Still accurate” counts as a review.</p>
+      {#if reviewError}<p class="error">{reviewError}</p>{/if}
       <p><button class="primary" type="submit">Save</button></p>
     </form>
 

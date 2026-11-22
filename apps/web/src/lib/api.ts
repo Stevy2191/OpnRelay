@@ -30,6 +30,7 @@ export interface Workspace {
   description: string;
   legal_hold: boolean;
   guide_count: number;
+  review_period_days: number | null;
   created_at: string;
   my_permission: Perm;
 }
@@ -85,6 +86,9 @@ export interface GuideSummary {
   created_at: string;
   updated_at: string;
   published_at: string | null;
+  reviewed_at: string | null;
+  review_due_at: string | null;
+  needs_review: boolean;
 }
 
 export interface Guide extends GuideSummary {

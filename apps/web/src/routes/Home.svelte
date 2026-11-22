@@ -15,13 +15,15 @@
   let q = $derived(params.get('q') ?? '');
   let wsId = $derived(params.get('ws') ?? '');
   let folderId = $derived(params.get('folder') ?? '');
+  let reviewOnly = $derived(params.get('needs_review') === 'true');
   let current = $derived(workspaces.find((w) => w.id === wsId));
   let canEdit = $derived(current && (current.my_permission === 'edit' || current.my_permission === 'manage'));
 
-  function link(ws: string, folder = '') {
+  function link(ws: string, folder = '', review = false) {
     const p = new URLSearchParams();
     if (ws) p.set('ws', ws);
     if (folder) p.set('folder', folder);
+    if (review) p.set('needs_review', 'true');
     const s = p.toString();
     return `#/${s ? '?' + s : ''}`;
   }
@@ -29,6 +31,16 @@
   async function loadWorkspaces() {
     workspaces = await api<Workspace[]>('/workspaces');
   }
+
+  // Only editors of a guide's workspace (or admins) are shown the review flag.
+  function canEditGuide(g: GuideSummary): boolean {
+    if (isAdmin(session.me)) return true;
+    const w = workspaces.find((x) => x.id === g.workspace_id);
+    return !!w && (w.my_permission === 'edit' || w.my_permission === 'manage');
+  }
+  let flagged = $state<GuideSummary[]>([]);
+  let flaggedCount = $derived(flagged.filter(canEditGuide).length);
+  let shown = $derived(reviewOnly ? guides.filter((g) => g.needs_review && canEditGuide(g)) : guides);
 
   async function loadGuides() {
     loading = true;
@@ -38,7 +50,10 @@
       if (q) p.set('q', q);
       if (wsId && !q) p.set('workspace_id', wsId);
       if (folderId && !q) p.set('folder_id', folderId);
-      guides = await api<GuideSummary[]>(`/guides?${p}`);
+      const all = await api<GuideSummary[]>(`/guides?${p}`);
+      guides = all;
+      p.set('needs_review', 'true');
+      flagged = all.some((g) => g.needs_review) ? await api<GuideSummary[]>(`/guides?${p}`) : [];
       folders = wsId ? await api<Folder[]>(`/workspaces/${wsId}/folders`) : [];
     } catch (e) {
       error = errorText(e);
@@ -153,20 +168,34 @@
           <p class="muted">Ask your administrator to add you. Guides will appear here once you are.</p>
         {/if}
       </div>
-    {:else if guides.length === 0}
+    {:else if guides.length === 0 || (reviewOnly && shown.length === 0)}
+      {#if reviewOnly}
+        <p class="review-bar"><a href={link(wsId, folderId)}>Clear “Needs review” filter</a></p>
+      {/if}
       <div class="card empty">
         <p><strong>No guides here yet.</strong></p>
         <p class="muted">
-          {#if canEdit}Create one with <em>New guide</em>, then paste or upload screenshots. The desktop recorder and browser extension will add guides here automatically.{:else}Nothing has been published here yet.{/if}
+          {#if reviewOnly}No guides need review.{:else if canEdit}Create one with <em>New guide</em>, then paste or upload screenshots. The desktop recorder and browser extension will add guides here automatically.{:else}Nothing has been published here yet.{/if}
         </p>
       </div>
     {:else}
+      {#if flaggedCount > 0 || reviewOnly}
+        <p class="review-bar">
+          {#if reviewOnly}
+            <span class="badge review">Needs review</span>
+            <a href={link(wsId, folderId)}>Clear filter</a>
+          {:else}
+            <a href={link(wsId, folderId, true)}>{flaggedCount} {flaggedCount === 1 ? 'guide needs' : 'guides need'} review</a>
+          {/if}
+        </p>
+      {/if}
       <div class="grid">
-        {#each guides as g (g.id)}
+        {#each shown as g (g.id)}
           <a class="card guide" href={`#/guides/${g.id}`}>
             <div class="spread">
               <span class="badge {g.status}">{g.status}</span>
               {#if g.classification !== 'internal'}<span class="badge {g.classification}">{g.classification}</span>{/if}
+              {#if g.needs_review && canEditGuide(g)}<span class="badge review">Needs review</span>{/if}
             </div>
             <h3>{g.title}</h3>
             {#if g.description}<p class="muted small desc">{g.description}</p>{/if}
@@ -195,4 +224,5 @@
   .guide h3 { margin: 0.6rem 0 0.25rem; }
   .desc { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
   .empty { margin-top: 1rem; }
+  .review-bar { margin: 0.75rem 0 0; display: flex; gap: 0.75rem; align-items: center; }
 </style>

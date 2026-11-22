@@ -48,6 +48,7 @@ No fixed timeline. Each milestone ends with something usable and demoable.
 - [x] Tips/alerts/headings, insert steps (done in M1)
 - [ ] Merge/split steps, record-into-existing-guide
 - [x] Version history + restore, publish workflow (done in M1)
+- [x] Needs-review flag (per-workspace review period)
 - [ ] Internal links, public links (password/expiry), embeds, admin sharing policies
 
 ## M6: Enterprise auth & compliance

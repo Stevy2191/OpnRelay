@@ -15,6 +15,21 @@
       .catch((e) => (error = errorText(e)));
   });
 
+  let reviewNotice = $state('');
+  let reviewing = $state(false);
+  async function markReviewed() {
+    reviewing = true;
+    reviewNotice = error = '';
+    try {
+      guide = await api<Guide>(`/guides/${id}/reviewed`, { body: {} });
+      reviewNotice = 'Marked as reviewed';
+    } catch (e) {
+      error = errorText(e);
+    } finally {
+      reviewing = false;
+    }
+  }
+
   let canEdit = $derived(guide && (guide.my_permission === 'edit' || guide.my_permission === 'manage'));
 
   // Number only action steps, like the exports do.
@@ -53,7 +68,7 @@
   }
 </script>
 
-{#if error}
+{#if error && !guide}
   <p class="error">{error}</p>
 {:else if !guide}
   <p class="muted">Loading…</p>
@@ -68,6 +83,7 @@
           {#if guide.classification !== 'internal'}<span class="badge {guide.classification}">{guide.classification}</span>{/if}
           {guide.step_count} steps · by {guide.author_name ?? 'unknown'} · updated {dateTime(guide.updated_at)}
           {#if guide.current_version}· version {guide.current_version}{/if}
+          {#if guide.reviewed_at}· Last reviewed {new Date(guide.reviewed_at).toLocaleDateString()}{/if}
         </p>
       </div>
       <div class="row">
@@ -89,6 +105,18 @@
         {/if}
       </div>
     </div>
+    {#if error}<p class="error">{error}</p>{/if}
+    {#if canEdit && guide.needs_review}
+      <div class="review-notice row">
+        <p>
+          <strong>This guide is due for review.</strong>
+          <span class="small">Confirm it is still correct, or publish a new version, which also counts as a review.</span>
+        </p>
+        <button class="primary" onclick={markReviewed} disabled={reviewing}>Still accurate</button>
+      </div>
+    {:else if reviewNotice}
+      <p class="success" role="status">{reviewNotice}</p>
+    {/if}
     {#if guide.description}<p class="lead">{guide.description}</p>{/if}
 
     <ol class="steps">
@@ -123,6 +151,8 @@
   .menu a { padding: 0.4rem 0.6rem; border-radius: 6px; color: var(--text); }
   .menu a:hover { background: var(--surface-2); text-decoration: none; }
   .menu label { padding: 0.4rem 0.6rem; margin: 0; border-top: 1px solid var(--border); }
+  .review-notice { justify-content: space-between; gap: 1rem; margin: 0.75rem 0; padding: 0.6rem 1rem; border-radius: var(--radius); border: 1px solid #f59e0b; background: color-mix(in srgb, #f59e0b 15%, var(--surface)); }
+  .review-notice p { margin: 0; }
   .lead { font-size: 1.05rem; }
   .steps { list-style: none; padding: 0; margin: 1.5rem 0; }
   .step { margin-bottom: 1.75rem; }
