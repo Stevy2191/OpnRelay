@@ -33,7 +33,6 @@ export const canAudit = (me: Me | null) => isAdmin(me) || me?.org_role === 'audi
 export async function loadBranding() {
   try {
     session.branding = await api<Branding>('/branding');
-    document.documentElement.style.setProperty('--primary', session.branding.primary_color);
   } catch {
     session.branding = null;
   }
