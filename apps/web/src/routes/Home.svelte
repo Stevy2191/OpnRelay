@@ -1,21 +1,22 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-  import { api, type Folder, type GuideSummary, type Workspace } from '../lib/api';
+  import { api, type Folder, type GuideSummary } from '../lib/api';
   import { route, query, go } from '../lib/router.svelte';
-  import { session, isAdmin } from '../lib/session.svelte';
+  import { session, isAdmin, workspacesStore, shellUi } from '../lib/session.svelte';
   import { errorText, when } from '../lib/format';
 
-  let workspaces = $state<Workspace[]>([]);
+  let workspaces = $derived(workspacesStore.list);
   let folders = $state<Folder[]>([]);
   let guides = $state<GuideSummary[]>([]);
   let error = $state('');
   let loading = $state(true);
-  let workspacesLoaded = $state(false);
+  let workspacesLoaded = $derived(workspacesStore.loaded);
 
   let params = $derived(query(route.path));
   let q = $derived(params.get('q') ?? '');
   let wsId = $derived(params.get('ws') ?? '');
   let folderId = $derived(params.get('folder') ?? '');
+  let statusFilter = $derived(params.get('status') ?? '');
   let reviewOnly = $derived(params.get('needs_review') === 'true');
   let current = $derived(workspaces.find((w) => w.id === wsId));
   let canEdit = $derived(current && (current.my_permission === 'edit' || current.my_permission === 'manage'));
@@ -29,11 +30,6 @@
     return `#/${s ? '?' + s : ''}`;
   }
 
-  async function loadWorkspaces() {
-    workspaces = await api<Workspace[]>('/workspaces');
-    workspacesLoaded = true;
-  }
-
   // Only editors of a guide's workspace (or admins) are shown the review flag.
   function canEditGuide(g: GuideSummary): boolean {
     if (isAdmin(session.me)) return true;
@@ -43,7 +39,7 @@
   let flagged = $state<GuideSummary[]>([]);
   // The server only returns flagged guides from workspaces the caller can edit.
   let flaggedCount = $derived(flagged.length);
-  let shown = $derived(reviewOnly ? flagged : guides);
+  let shown = $derived(reviewOnly ? flagged : statusFilter ? guides.filter((g) => g.status === statusFilter) : guides);
 
   async function loadGuides() {
     loading = true;
@@ -66,26 +62,11 @@
   }
 
   $effect(() => {
-    loadWorkspaces().catch((e) => (error = errorText(e)));
-  });
-  $effect(() => {
     void q;
     void wsId;
     void folderId;
     loadGuides();
   });
-
-  async function newWorkspace() {
-    const name = prompt('Workspace name (e.g. HR, EMS, IT)');
-    if (!name) return;
-    try {
-      const ws = await api<{ id: string }>('/workspaces', { body: { name } });
-      await loadWorkspaces();
-      window.location.hash = link(ws.id);
-    } catch (e) {
-      alert(errorText(e));
-    }
-  }
 
   async function newFolder() {
     const name = prompt('Folder name');
@@ -115,38 +96,19 @@
   let wsName = (id: string) => workspaces.find((w) => w.id === id)?.name ?? '';
 </script>
 
-<div class="layout">
-  <aside>
-    <div class="spread">
-      <h3>Workspaces</h3>
-      {#if isAdmin(session.me)}<button class="small" onclick={newWorkspace} title="New workspace">+ New</button>{/if}
-    </div>
-    <ul class="nav">
-      <li><a class:active={!wsId && !q} href="#/">All guides</a></li>
-      {#each workspaces as w (w.id)}
-        <li>
-          <a class:active={w.id === wsId && !folderId} href={link(w.id)}>{w.name} <span class="muted small">{w.guide_count}</span></a>
-          {#if w.id === wsId}
-            <ul class="nav sub">
-              {#each folders as f (f.id)}
-                <li><a class:active={f.id === folderId} href={link(w.id, f.id)}>📁 {f.name}</a></li>
-              {/each}
-              {#if canEdit}<li><button class="ghost small" onclick={newFolder}>+ Folder</button></li>{/if}
-            </ul>
-          {/if}
-        </li>
-      {:else}
-        <li class="muted small">
-          {isAdmin(session.me) ? 'Create a workspace for each team to get started.' : 'You have not been added to a workspace yet.'}
-        </li>
-      {/each}
-    </ul>
-  </aside>
-
   <section>
+    {#if folders.length || canEdit}
+      <div class="row folders" aria-label="Folders">
+        {#if wsId}<a class="btn small" class:primary={!folderId} href={link(wsId)}>All in {current?.name ?? 'workspace'}</a>{/if}
+        {#each folders as f (f.id)}
+          <a class="btn small" class:primary={f.id === folderId} href={link(wsId, f.id)} title={f.name}><span class="fname">{f.name}</span></a>
+        {/each}
+        {#if canEdit}<button class="ghost small" onclick={newFolder}>+ Folder</button>{/if}
+      </div>
+    {/if}
     <div class="spread">
       <h1>
-        {#if q}Results for “{q}”{:else if current}{current.name}{:else}All guides{/if}
+        {#if q}Results for “{q}”{:else if statusFilter === 'draft'}Drafts{:else if reviewOnly}Needs review{:else if current}{current.name}{:else}All guides{/if}
       </h1>
       <div class="row">
         {#if current && current.my_permission === 'manage'}
@@ -165,13 +127,13 @@
         {#if isAdmin(session.me)}
           <p><strong>Create your first workspace</strong></p>
           <p class="muted">Workspaces hold your guides and decide who can see them, for example one per department.</p>
-          <p><button class="primary" onclick={newWorkspace}>Create workspace</button></p>
+          <p><button class="primary" onclick={() => (shellUi.newWorkspace = true)}>Create workspace</button></p>
         {:else}
           <p><strong>You haven't been added to a workspace yet.</strong></p>
           <p class="muted">Ask your administrator to add you. Guides will appear here once you are.</p>
         {/if}
       </div>
-    {:else if guides.length === 0 || (reviewOnly && shown.length === 0)}
+    {:else if shown.length === 0}
       {#if reviewOnly}
         <p class="review-bar"><a href={link(wsId, folderId)}>Clear “Needs review” filter</a></p>
       {/if}
@@ -211,16 +173,10 @@
       </div>
     {/if}
   </section>
-</div>
 
 <style>
-  .layout { display: grid; grid-template-columns: 240px 1fr; gap: 1.5rem; }
-  @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } }
-  aside h3 { margin: 0; }
-  .nav { list-style: none; padding: 0; margin: 0.5rem 0; }
-  .nav a { display: flex; justify-content: space-between; padding: 0.35rem 0.6rem; border-radius: 6px; color: var(--text); }
-  .nav a.active { background: var(--surface-2); font-weight: 600; }
-  .nav.sub { margin: 0 0 0 0.75rem; }
+  .folders { margin-bottom: 0.75rem; }
+  .fname { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; margin-top: 1rem; }
   .guide { color: var(--text); display: block; }
   .guide:hover { border-color: var(--sig); text-decoration: none; }

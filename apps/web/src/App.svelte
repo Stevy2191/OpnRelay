@@ -2,7 +2,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { route, match, go } from './lib/router.svelte';
-  import { session, refresh, logout, isAdmin, canAudit } from './lib/session.svelte';
+  import { session, refresh } from './lib/session.svelte';
+  import Shell from './lib/Shell.svelte';
   import Login from './routes/Login.svelte';
   import Invite from './routes/Invite.svelte';
   import Home from './routes/Home.svelte';
@@ -31,12 +32,6 @@
     }
     else if (session.me?.mfa_setup_required && !match('/account', route.path)) go('/account');
   });
-
-  let search = $state('');
-  function submitSearch(e: Event) {
-    e.preventDefault();
-    go(search.trim() ? `/?q=${encodeURIComponent(search.trim())}` : '/');
-  }
 </script>
 
 {#if session.loading}
@@ -47,27 +42,7 @@
   <Login />
 {:else}
   {@const me = session.me}
-  <header class="topbar">
-    <a class="brand" href="#/">
-      {#if session.branding?.logo_media_id}
-        <img class="logo" src={`/api/v1/media/${session.branding.logo_media_id}`} alt="" />
-      {:else}
-        <img src="/favicon.svg" alt="" />
-      {/if}
-      <span>{me.organization.name}</span>
-    </a>
-    <form class="search" onsubmit={submitSearch} role="search">
-      <input type="search" placeholder="Search guides…" bind:value={search} aria-label="Search guides" />
-    </form>
-    <nav class="row">
-      <a href="#/">Guides</a>
-      {#if canAudit(me)}<a href="#/audit">Audit log</a>{/if}
-      {#if isAdmin(me)}<a href="#/downloads">Downloads</a><a href="#/admin">Admin</a>{/if}
-      <a href="#/account" title={me.email}>{me.display_name}</a>
-      <button class="small" onclick={logout}>Sign out</button>
-    </nav>
-  </header>
-  <main>
+  <Shell>
     {#if me.mfa_setup_required}
       <p class="error">Your organisation requires two-factor authentication. Set it up below to continue.</p>
     {/if}
@@ -90,25 +65,6 @@
     {:else}
       <Home />
     {/if}
-  </main>
+  </Shell>
 {/if}
 
-<style>
-  .topbar {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.6rem 1.25rem;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    flex-wrap: wrap;
-  }
-  .brand { color: var(--text); }
-  .brand .logo { width: auto; max-width: 140px; height: 28px; object-fit: contain; }
-  .search { flex: 1; min-width: 180px; max-width: 480px; }
-  nav a { color: var(--text); padding: 0.25rem 0.5rem; }
-  main { max-width: 1200px; margin: 0 auto; padding: 1.25rem; }
-</style>

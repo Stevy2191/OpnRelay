@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { api, ApiError, setCsrf, type Branding, type Me } from './api';
+import { api, ApiError, setCsrf, type Branding, type Me, type Workspace } from './api';
 
 export const session = $state<{ me: Me | null; loading: boolean; branding: Branding | null }>({ me: null, loading: true, branding: null });
 
@@ -37,3 +37,19 @@ export async function loadBranding() {
     session.branding = null;
   }
 }
+
+/** Workspace list shared by the shell sidebar and Home; fetched once, refreshed after changes. */
+export const workspacesStore = $state<{ list: Workspace[]; loaded: boolean; refresh: () => Promise<void> }>({
+  list: [],
+  loaded: false,
+  async refresh() {
+    try {
+      workspacesStore.list = await api<Workspace[]>('/workspaces');
+    } finally {
+      workspacesStore.loaded = true;
+    }
+  },
+});
+
+/** Cross-component shell actions (opened from the sidebar or from empty states). */
+export const shellUi = $state({ newWorkspace: false, record: false, drawer: false });

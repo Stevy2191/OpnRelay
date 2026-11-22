@@ -12,6 +12,10 @@
 
   type Tab = 'users' | 'groups' | 'policies' | 'branding' | 'sso' | 'backups';
   let tab = $state<Tab>((query(route.path).get('tab') as Tab) || 'users');
+  $effect(() => {
+    const t = query(route.path).get('tab');
+    if (t) tab = t as Tab;
+  });
   let users = $state<User[]>([]);
   let groups = $state<Group[]>([]);
   let policies = $state<Policies | null>(null);

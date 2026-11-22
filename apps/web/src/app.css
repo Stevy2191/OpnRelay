@@ -15,6 +15,7 @@
   --ok: #138a5e;
   --ok-soft: #eef9f4;
   --ok-line: #b5dfcd;
+  --ok-text: #0f6e4a; /* small text on --ok-soft: 5.82:1 */
   --warn: #9a5a00;
   --warn-soft: #fff7ea;
   --warn-line: #f0d3a8;
@@ -70,6 +71,7 @@
     --ok: #3ccf91;
     --ok-soft: #123327;
     --ok-line: #1f6a4d;
+    --ok-text: #3ccf91; /* 6.89:1 on --ok-soft */
     --warn: #f0b45a;
     --warn-soft: #33280f;
     --warn-line: #6b5320;
@@ -170,7 +172,7 @@ label.inline { display: flex; align-items: center; gap: 0.5rem; font-weight: 400
 .callout.alert, .callout.error { background: var(--danger-soft); border-color: var(--danger-line); border-left-color: var(--danger); color: var(--danger); }
 .callout.warning { background: var(--warn-soft); border-color: var(--warn-line); border-left-color: var(--warn); color: var(--warn); }
 .error { color: var(--danger); background: var(--danger-soft); border-radius: var(--radius); padding: 0.5rem 0.75rem; }
-.success { color: var(--ok); background: var(--ok-soft); border-radius: var(--radius); padding: 0.5rem 0.75rem; }
+.success { color: var(--ok-text); background: var(--ok-soft); border-radius: var(--radius); padding: 0.5rem 0.75rem; }
 .warning { color: var(--warn); background: var(--warn-soft); border: 1px solid var(--warn-line); border-radius: var(--radius); padding: 0.5rem 0.75rem; }
 
 /* Status tags: mono, uppercase */
@@ -191,7 +193,7 @@ label.inline { display: flex; align-items: center; gap: 0.5rem; font-weight: 400
   border: 1px solid var(--line);
   white-space: nowrap;
 }
-.tag.pub, .badge.published { color: var(--ok); background: var(--ok-soft); border-color: var(--ok-line); }
+.tag.pub, .badge.published { color: var(--ok-text); background: var(--ok-soft); border-color: var(--ok-line); }
 .tag.draft, .badge.draft { color: var(--muted-strong); background: var(--surface-2); border-color: var(--line); }
 .tag.review, .badge.review { color: var(--warn); background: var(--warn-soft); border-color: var(--warn-line); font-weight: 500; }
 .tag.class, .badge.confidential, .badge.restricted { color: var(--sig-text); background: var(--sig-soft); border-color: transparent; }
