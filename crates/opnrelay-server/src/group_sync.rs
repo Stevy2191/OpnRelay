@@ -25,6 +25,16 @@ fn db_err(e: impl std::fmt::Display) -> GraphError {
 
 const MAX_NAME: usize = 100;
 
+/// Who changes made by group sync are recorded as: the sync itself, never the
+/// person signing in (the person is the event's target or in its metadata).
+pub fn sync_actor() -> AuditActor {
+    AuditActor {
+        id: None,
+        label: "Microsoft sync".into(),
+        ip: None,
+    }
+}
+
 /// A group name free in the organisation: `base`, else `base (Microsoft)`,
 /// else `base (Microsoft 2)`, ... Group `own` (if any) does not count as a clash.
 pub async fn free_name(
@@ -138,14 +148,27 @@ pub async fn sync_group(
     let name = free_name(&mut tx, org, &dir.display_name, Some(group_id))
         .await
         .map_err(db_err)?;
-    sqlx::query(
-        "UPDATE groups SET name = $2, last_synced_at = now(), missing_since = NULL WHERE id = $1",
+    let old: String = sqlx::query_scalar(
+        "UPDATE groups g SET name = $2, last_synced_at = now(), missing_since = NULL
+         FROM (SELECT id, name FROM groups WHERE id = $1 FOR UPDATE) o
+         WHERE g.id = o.id RETURNING o.name",
     )
     .bind(group_id)
-    .bind(name)
-    .execute(&mut *tx)
+    .bind(&name)
+    .fetch_one(&mut *tx)
     .await
     .map_err(db_err)?;
+    if old != name {
+        audit::record(
+            &mut tx,
+            actor,
+            Event::new("group.renamed")
+                .target("group", group_id)
+                .meta(json!({"from": old, "to": name, "source": "microsoft"})),
+        )
+        .await
+        .map_err(db_err)?;
+    }
     tx.commit().await.map_err(db_err)?;
     Ok(SyncCounts {
         added: added.len() as u32,
@@ -161,13 +184,12 @@ pub async fn sync_user(
     user_id: Uuid,
     oid: &str,
 ) -> Result<(), GraphError> {
-    let Some((email, status, org)): Option<(String, String, Uuid)> = sqlx::query_as(
-        "SELECT email::text, status, org_id FROM users WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(user_id)
-    .fetch_optional(&st.db)
-    .await
-    .map_err(db_err)?
+    let Some((status, org)): Option<(String, Uuid)> =
+        sqlx::query_as("SELECT status, org_id FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(user_id)
+            .fetch_optional(&st.db)
+            .await
+            .map_err(db_err)?
     else {
         return Ok(());
     };
@@ -199,11 +221,7 @@ pub async fn sync_user(
             .map_err(db_err)?
             .into_iter()
             .collect();
-    let actor = AuditActor {
-        id: Some(user_id),
-        label: email,
-        ip: None,
-    };
+    let actor = sync_actor();
     for (gid, external) in linked {
         let want = external.is_some_and(|e| theirs.contains(&e));
         let (sql, action) = match (want, have.contains(&gid)) {
@@ -345,11 +363,15 @@ pub async fn recompute_roles(
     let rows = role_targets(tx, org, only_user, None, true).await?;
     let mut changed = 0;
     for (id, from, to) in rows {
-        sqlx::query("UPDATE users SET role_source = 'idp', org_role = $2 WHERE id = $1")
-            .bind(id)
-            .bind(&to)
-            .execute(&mut *tx)
-            .await?;
+        // Rows already right are left alone (no write, no new row version).
+        sqlx::query(
+            "UPDATE users SET role_source = 'idp', org_role = $2
+             WHERE id = $1 AND (role_source <> 'idp' OR org_role <> $2)",
+        )
+        .bind(id)
+        .bind(&to)
+        .execute(&mut *tx)
+        .await?;
         if from != to {
             changed += 1;
             audit::record(
@@ -380,22 +402,16 @@ pub async fn preview_role_changes(
 /// Recompute one person's role in its own transaction. Needs no Graph call, so
 /// sign-in can still apply the mapping when Microsoft cannot be reached.
 pub async fn recompute_user(st: &AppState, user_id: Uuid) -> sqlx::Result<u32> {
-    let row: Option<(String, Uuid)> = sqlx::query_as(
-        "SELECT email::text, org_id FROM users WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(user_id)
-    .fetch_optional(&st.db)
-    .await?;
-    let Some((email, org)) = row else {
+    let org: Option<Uuid> =
+        sqlx::query_scalar("SELECT org_id FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(user_id)
+            .fetch_optional(&st.db)
+            .await?;
+    let Some(org) = org else {
         return Ok(0);
     };
-    let actor = AuditActor {
-        id: Some(user_id),
-        label: email,
-        ip: None,
-    };
     let mut tx = st.db.begin().await?;
-    let n = recompute_roles(&mut tx, org, Some(user_id), &actor).await?;
+    let n = recompute_roles(&mut tx, org, Some(user_id), &sync_actor()).await?;
     tx.commit().await?;
     Ok(n)
 }
@@ -483,6 +499,13 @@ async fn disable_leavers(
         .into_iter()
         .map(|(k, v)| (k.to_ascii_lowercase(), v))
         .collect();
+    if state.is_empty() && !oids.is_empty() {
+        // Not one linked account exists there: a wrong tenant or directory, not
+        // everyone leaving at once. Disable no one.
+        return Err(GraphError::Failed(
+            "Microsoft returned none of the linked accounts; check the tenant".into(),
+        ));
+    }
 
     // One entry per person: (id, name, role, identities).
     let mut people: Vec<(Uuid, String, String, Vec<String>)> = Vec::new();
@@ -687,6 +710,9 @@ async fn sync_all_inner(
     }
 
     let mut lock = st.db.acquire().await?;
+    // Closed, never returned to the pool, when dropped: if the run panics, the
+    // session (and the advisory lock with it) ends instead of being reused.
+    lock.close_on_drop();
     let got: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
         .bind(SYNC_LOCK_KEY)
         .fetch_one(&mut *lock)
@@ -696,14 +722,11 @@ async fn sync_all_inner(
         return Ok(sum);
     }
     let res = run_locked(st, org, &p, actor, confirm_brake, &mut sum).await;
-    let unlocked = sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
+    let _ = sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
         .bind(SYNC_LOCK_KEY)
         .fetch_one(&mut *lock)
         .await;
-    if !matches!(unlocked, Ok(true)) {
-        // Never hand a connection that may still hold the lock back to the pool.
-        let _ = lock.detach();
-    }
+    drop(lock);
     res?;
     Ok(sum)
 }
@@ -731,27 +754,40 @@ async fn run_locked(
     .bind(org)
     .fetch_all(&st.db)
     .await?;
-    for gid in groups {
+    // Groups Microsoft says are deleted. Emptied only once the whole pass has
+    // run, so a wrong tenant (every group "deleted") changes nothing.
+    let mut gone: Vec<Uuid> = Vec::new();
+    for &gid in &groups {
         sum.groups += 1;
-        let r = match sync_group(st, p, gid, actor).await {
-            Ok(c) => Ok((c.added, c.removed)),
-            Err(GraphError::NotFound) => {
-                sum.missing += 1;
-                mark_missing(st, gid, actor).await.map(|n| (0, n))
+        match sync_group(st, p, gid, actor).await {
+            Ok(c) => {
+                sum.added += c.added;
+                sum.removed += c.removed;
             }
-            Err(e) => Err(e),
-        };
-        match r {
-            Ok((a, rm)) => {
-                sum.added += a;
-                sum.removed += rm;
-            }
-            Err(e) => {
-                sum.error = Some(match e {
-                    GraphError::Failed(m) => m,
-                    GraphError::NotFound => "group not found".into(),
-                });
+            Err(GraphError::NotFound) => gone.push(gid),
+            Err(GraphError::Failed(m)) => {
+                sum.error = Some(m);
                 break;
+            }
+        }
+    }
+    if sum.error.is_none() && groups.len() >= 2 && gone.len() == groups.len() {
+        sum.error = Some(
+            "Microsoft found none of the linked groups; nothing was changed. Check the tenant"
+                .into(),
+        );
+    }
+    if sum.error.is_none() {
+        for gid in gone {
+            match mark_missing(st, gid, actor).await {
+                Ok(n) => {
+                    sum.missing += 1;
+                    sum.removed += n;
+                }
+                Err(e) => {
+                    sum.error = Some(e.to_string());
+                    break;
+                }
             }
         }
     }

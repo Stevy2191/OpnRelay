@@ -278,14 +278,25 @@ async fn handle_callback(
     .map_err(ApiError::bad)?;
 
     let user_id = resolve_user(st, org, &provider, &identity, client).await?;
-    if provider.group_sync_enabled
-        && let Err(e) =
-            crate::group_sync::sync_user(st, &provider, user_id, &identity.subject).await
-    {
-        tracing::warn!(error = ?e, "group sync at sign-in failed");
-        // Roles need no Graph call: still apply the mapping to this person.
-        if let Err(e) = crate::group_sync::recompute_user(st, user_id).await {
-            tracing::warn!(error = ?e, "role recompute at sign-in failed");
+    if provider.group_sync_enabled {
+        // Sign-in must not wait long on Microsoft: past the limit it goes ahead
+        // as if Graph had failed.
+        let synced = tokio::time::timeout(
+            SIGN_IN_SYNC_LIMIT,
+            crate::group_sync::sync_user(st, &provider, user_id, &identity.subject),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(crate::graph::GraphError::Failed(
+                "Microsoft took too long to answer".into(),
+            ))
+        });
+        if let Err(e) = synced {
+            tracing::warn!(error = ?e, %user_id, "group sync at sign-in failed");
+            // Roles need no Graph call: still apply the mapping to this person.
+            if let Err(e) = crate::group_sync::recompute_user(st, user_id).await {
+                tracing::warn!(error = ?e, %user_id, "role recompute at sign-in failed");
+            }
         }
     }
     let (token, lifetime) =
@@ -318,6 +329,9 @@ async fn handle_callback(
     h.append(header::SET_COOKIE, state_cookie(st, "", 0));
     Ok((h, Redirect::to(&format!("/#{}", row.return_to))).into_response())
 }
+
+/// How long sign-in waits for the group sync of the person signing in.
+const SIGN_IN_SYNC_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(sqlx::FromRow)]
 struct UserRow {
@@ -427,6 +441,15 @@ async fn resolve_user(
                 Event::new("user.enabled")
                     .target("user", user.id)
                     .meta(json!({"source": "microsoft"})),
+            )
+            .await?;
+            // Whether or not group sync is on, a returning person must not keep a
+            // role the groups no longer give (same as an administrator re-enabling).
+            crate::group_sync::recompute_roles(
+                &mut tx,
+                org,
+                Some(user.id),
+                &crate::group_sync::sync_actor(),
             )
             .await?;
         }
@@ -601,6 +624,8 @@ async fn put_settings(
     let sync_was = existing.as_ref().is_some_and(|p| p.group_sync_enabled);
     let enc = microsoft::seal_config(&st, id, &app)?;
     let mut tx = st.db.begin().await?;
+    // Audit chain lock first, before any row this transaction writes.
+    audit::lock(&mut tx).await?;
     sqlx::query(
         "INSERT INTO identity_providers (id, org_id, kind, name, config_enc, enabled, jit_provisioning, default_role, group_sync_enabled)
          VALUES ($1,$2,'oidc',$3,$4,$5,$6,$7,$8)

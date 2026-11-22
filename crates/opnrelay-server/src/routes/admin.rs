@@ -218,15 +218,24 @@ async fn update_user(
     Json(req): Json<UpdateUser>,
 ) -> ApiResult<Json<UserRow>> {
     require_admin(&a)?;
-    let target = load_user(&st, &a, id).await?;
-    let target_role =
-        OrgRole::parse(&target.org_role).ok_or_else(|| anyhow::anyhow!("bad role"))?;
-    if target_role == OrgRole::Owner && a.role != OrgRole::Owner {
-        return Err(ApiError::Forbidden("only an owner can change an owner"));
-    }
     let mut tx = st.db.begin().await?;
     // Audit chain lock before any user row, like every role-changing path.
     audit::lock(&mut tx).await?;
+    // Read under the lock: a group's grants_role change (which also takes the
+    // audit lock first) cannot slip in between this check and the update.
+    let (cur_role, cur_source, cur_status): (String, String, String) = sqlx::query_as(
+        "SELECT org_role, role_source, status FROM users
+         WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL FOR UPDATE",
+    )
+    .bind(id)
+    .bind(a.org_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    let target_role = OrgRole::parse(&cur_role).ok_or_else(|| anyhow::anyhow!("bad role"))?;
+    if target_role == OrgRole::Owner && a.role != OrgRole::Owner {
+        return Err(ApiError::Forbidden("only an owner can change an owner"));
+    }
     let mut changes = serde_json::Map::new();
     if let Some(n) = &req.display_name {
         let n = util::name("display_name", n, 100)?;
@@ -239,7 +248,7 @@ async fn update_user(
     }
     if let Some(r) = &req.org_role {
         let role = OrgRole::parse(r).ok_or_else(|| ApiError::bad("invalid org_role"))?;
-        if target.role_source == "idp" && r != &target.org_role {
+        if cur_source == "idp" && r != &cur_role {
             return Err(ApiError::bad(
                 "This person's role is set by a Microsoft group",
             ));
@@ -262,7 +271,7 @@ async fn update_user(
         if id == a.user_id && s == "disabled" {
             return Err(ApiError::bad("you cannot disable your own account"));
         }
-        if s == "active" && target.status == "invited" {
+        if s == "active" && cur_status == "invited" {
             return Err(ApiError::bad("the user must accept their invitation first"));
         }
         sqlx::query(

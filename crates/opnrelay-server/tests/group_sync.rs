@@ -1560,6 +1560,7 @@ async fn leaver_events(owner: &Session) -> Vec<Value> {
 }
 
 const LV: &str = "00000000-0000-0000-0000-0000000000d1";
+const LV2: &str = "00000000-0000-0000-0000-0000000000d2";
 
 async fn setup_sso() -> (App, common::fake_ms::S, Session) {
     let (base, fake) = fake_microsoft().await;
@@ -1665,6 +1666,8 @@ async fn leaver_disabled_and_signed_out() {
 async fn deleted_user_treated_as_leaver() {
     let (app, fake, owner) = setup_sso().await;
     let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    // Someone else still exists, so the directory answer is not empty.
+    sign_in_browser(&app, &fake, LV2, "kim@acme.test").await;
     fake.lock().unwrap().users.remove(LV);
     assert_eq!(sync_now(&owner).await["disabled"], 1);
     assert_eq!(user_state(&app, &id).await.0, "disabled");
@@ -1923,7 +1926,7 @@ async fn upper_case_oids_match() {
 async fn email_match_with_new_oid_stays_refused() {
     let (app, fake, owner) = setup_sso().await;
     let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
-    fake.lock().unwrap().users.remove(LV);
+    set_enabled(&fake, LV, false);
     assert_eq!(sync_now(&owner).await["disabled"], 1);
     let new = "00000000-0000-0000-0000-0000000000d8";
     next_user(&fake, new, "lee@acme.test");
@@ -1982,5 +1985,237 @@ async fn confirmation_cannot_exceed_what_was_shown() {
         .await
         .unwrap();
     assert_eq!(sum["disabled"], 12, "{sum}");
+    app.cleanup().await;
+}
+
+// ---- final review fixes ----
+
+async fn events(owner: &Session, action: &str) -> Vec<Value> {
+    let v: Value = owner
+        .get(&format!("/audit/events?action={action}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    v.as_array().unwrap().clone()
+}
+
+async fn missing(app: &App, gid: &str) -> bool {
+    sqlx::query_scalar("SELECT missing_since IS NOT NULL FROM groups WHERE id = $1::uuid")
+        .bind(gid)
+        .fetch_one(&app.state().db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn reenable_at_sign_in_recomputes_role_with_sync_off() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(IT.into(), fg("IT Admins", "security", &[LV], &[]));
+    let gid = link(&owner, IT).await;
+    grant(&owner, &gid, json!("admin")).await;
+    assert_eq!(admin_user(&owner, &id).await["org_role"], "admin");
+
+    set_enabled(&fake, LV, false);
+    assert_eq!(sync_now(&owner).await["disabled"], 1);
+    set_members(&fake, IT, &[]);
+    sync_now(&owner).await;
+    assert_eq!(sso(&owner, TENANT, false).await.status(), 204);
+
+    set_enabled(&fake, LV, true);
+    let (_, b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    assert_eq!(me_status(&app, &b).await, StatusCode::OK);
+    let u = admin_user(&owner, &id).await;
+    assert_eq!(u["status"], "active");
+    assert_eq!(u["org_role"], "member");
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn empty_directory_answer_disables_no_one() {
+    let (app, fake, owner) = setup_sso().await;
+    let (a, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    let (b, _b2) = sign_in_browser(&app, &fake, LV2, "kim@acme.test").await;
+    // Wrong tenant / wrong directory: none of the linked accounts exist there.
+    fake.lock().unwrap().users.clear();
+    let sum = sync_now(&owner).await;
+    assert_eq!(sum["disabled"], 0);
+    let err = sum["error"].as_str().unwrap();
+    assert!(err.contains("check the tenant"), "{err}");
+    assert_eq!(user_state(&app, &a).await.0, "active");
+    assert_eq!(user_state(&app, &b).await.0, "active");
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn every_group_missing_is_a_failure() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    {
+        let mut f = fake.lock().unwrap();
+        f.groups
+            .insert(HR.into(), fg("HR Staff", "security", &[LV], &[]));
+        f.groups.insert(IT.into(), fg("IT", "security", &[LV], &[]));
+    }
+    let hr = link(&owner, HR).await;
+    let it = link(&owner, IT).await;
+    {
+        let mut f = fake.lock().unwrap();
+        f.deleted_groups.insert(HR.into());
+        f.deleted_groups.insert(IT.into());
+    }
+    set_enabled(&fake, LV, false);
+    let sum = sync_now(&owner).await;
+    assert!(sum["error"].is_string(), "{sum}");
+    assert_eq!(sum["disabled"], 0);
+    for g in [&hr, &it] {
+        assert_eq!(member_count(&app, g).await, 1);
+        assert!(!missing(&app, g).await);
+    }
+    assert_eq!(user_state(&app, &id).await.0, "active");
+    assert!(actions(&owner, "idp.group.missing").await.is_empty());
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn members_404_is_a_failure_not_a_deletion() {
+    let (app, fake, owner) = setup_sso().await;
+    sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(HR.into(), fg("HR Staff", "security", &[LV], &[]));
+    let gid = link(&owner, HR).await;
+    fake.lock().unwrap().members_missing = true;
+    let sum = sync_now(&owner).await;
+    assert!(sum["error"].is_string(), "{sum}");
+    assert_eq!(sum["missing"], 0);
+    assert_eq!(member_count(&app, &gid).await, 1);
+    assert!(!missing(&app, &gid).await);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn sign_in_sync_audited_as_microsoft_sync() {
+    let (app, fake, owner) = setup_sso().await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(IT.into(), fg("IT Admins", "security", &[LV], &[]));
+    let gid = link(&owner, IT).await;
+    grant(&owner, &gid, json!("admin")).await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    for action in ["group.member.added", "user.role.changed"] {
+        let ev = events(&owner, action).await;
+        assert_eq!(ev.len(), 1, "{action}");
+        assert_eq!(ev[0]["actor_label"], "Microsoft sync", "{action}");
+        assert!(ev[0]["actor_id"].is_null(), "{action}");
+    }
+    assert_eq!(
+        events(&owner, "group.member.added").await[0]["metadata"]["user_id"],
+        id
+    );
+    assert_eq!(
+        events(&owner, "user.role.changed").await[0]["target_id"],
+        id
+    );
+
+    // The Graph-outage path (role recompute only) too.
+    set_members(&fake, IT, &[]);
+    sync_now(&owner).await;
+    set_members(&fake, IT, &[LV]);
+    fake.lock().unwrap().graph_fail = true;
+    // Put the membership back by hand so the recompute has something to do.
+    sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1::uuid, $2::uuid)")
+        .bind(&gid)
+        .bind(&id)
+        .execute(&app.state().db)
+        .await
+        .unwrap();
+    sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    let ev = events(&owner, "user.role.changed").await;
+    // Newest first: the sign-in recompute, not the owner's "Sync now".
+    assert_eq!(ev.len(), 3);
+    assert_eq!(ev[0]["metadata"]["to"], "admin");
+    assert_eq!(ev[0]["actor_label"], "Microsoft sync");
+    assert!(ev[0]["actor_id"].is_null());
+    app.cleanup().await;
+}
+
+async fn xmin(app: &App, id: &str) -> String {
+    sqlx::query_scalar("SELECT xmin::text FROM users WHERE id = $1::uuid")
+        .bind(id)
+        .fetch_one(&app.state().db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn role_recompute_leaves_unchanged_users_alone() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(IT.into(), fg("IT Admins", "security", &[LV], &[]));
+    let gid = link(&owner, IT).await;
+    grant(&owner, &gid, json!("admin")).await;
+    let before = xmin(&app, &id).await;
+    sync_now(&owner).await;
+    assert_eq!(xmin(&app, &id).await, before);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn rename_in_microsoft_is_audited() {
+    let (app, fake, owner) = setup_sso().await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(HR.into(), fg("HR Staff", "security", &[], &[]));
+    let gid = link(&owner, HR).await;
+    fake.lock().unwrap().groups.get_mut(HR).unwrap().name = "People".into();
+    sync_now(&owner).await;
+    sync_now(&owner).await;
+    let ev = events(&owner, "group.renamed").await;
+    assert_eq!(ev.len(), 1);
+    assert_eq!(ev[0]["target_id"], gid);
+    assert_eq!(
+        ev[0]["metadata"],
+        json!({"from": "HR Staff", "to": "People", "source": "microsoft"})
+    );
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn slow_microsoft_does_not_hold_up_sign_in() {
+    let (app, fake, owner) = setup_sso().await;
+    let (id, _b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    fake.lock()
+        .unwrap()
+        .groups
+        .insert(IT.into(), fg("IT Admins", "security", &[LV], &[]));
+    let gid = link(&owner, IT).await;
+    grant(&owner, &gid, json!("admin")).await;
+    // Membership lost in OpnRelay only, so the role recompute alone changes the role.
+    sqlx::query("DELETE FROM group_members WHERE group_id = $1::uuid")
+        .bind(&gid)
+        .execute(&app.state().db)
+        .await
+        .unwrap();
+    fake.lock().unwrap().member_of_delay = Some(std::time::Duration::from_secs(9));
+    let t = std::time::Instant::now();
+    let (_, b) = sign_in_browser(&app, &fake, LV, "lee@acme.test").await;
+    let took = t.elapsed();
+    assert_eq!(me_status(&app, &b).await, StatusCode::OK);
+    assert!(
+        took < std::time::Duration::from_secs(8),
+        "sign-in took {took:?}"
+    );
+    assert_eq!(admin_user(&owner, &id).await["org_role"], "member");
     app.cleanup().await;
 }

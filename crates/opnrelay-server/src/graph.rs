@@ -253,7 +253,14 @@ pub async fn group_user_ids(
 ) -> Result<HashSet<String>, GraphError> {
     let group_id = check_id(group_id)?;
     let path = format!("/groups/{group_id}/transitiveMembers/microsoft.graph.user");
-    let items = list_all(st, app, &path, &[("$select", "id"), ("$top", "999")], true).await?;
+    // Only `get_group`'s 404 means "deleted": a 404 here (first page or a
+    // nextLink page) is a failed read, never an empty group.
+    let items = list_all(st, app, &path, &[("$select", "id"), ("$top", "999")], true)
+        .await
+        .map_err(|e| match e {
+            GraphError::NotFound => failed("Microsoft could not list the group's members"),
+            e => e,
+        })?;
     Ok(ids(&items))
 }
 

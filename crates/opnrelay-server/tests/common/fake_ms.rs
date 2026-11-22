@@ -37,6 +37,10 @@ pub struct Fake {
     pub users_fail: bool,
     /// Only `transitiveMembers` listings return 503.
     pub members_fail: bool,
+    /// Only `transitiveMembers` listings return 404 (the group itself still answers).
+    pub members_missing: bool,
+    /// `transitiveMemberOf` (sign-in sync) answers only after this long.
+    pub member_of_delay: Option<std::time::Duration>,
     /// The next Graph directory call returns 429 with `Retry-After: 1`.
     pub throttle_once: bool,
     /// Group ids that answer 404 (deleted in the directory).
@@ -336,6 +340,9 @@ async fn group_members(
     if f.members_fail {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
+    if f.members_missing {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     if f.deleted_groups.contains(&id) || !f.groups.contains_key(&id) {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -353,6 +360,10 @@ async fn user_member_of(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    let delay = s.lock().unwrap().member_of_delay;
+    if let Some(d) = delay {
+        tokio::time::sleep(d).await;
+    }
     let mut f = s.lock().unwrap();
     if let Some(r) = dir_guard(&mut f, &headers) {
         return r;
