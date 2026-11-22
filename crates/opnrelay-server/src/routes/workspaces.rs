@@ -41,6 +41,7 @@ struct WorkspaceRow {
     name: String,
     description: String,
     legal_hold: bool,
+    review_period_days: Option<i32>,
     guide_count: i64,
     #[serde(with = "time::serde::rfc3339")]
     created_at: OffsetDateTime,
@@ -48,7 +49,7 @@ struct WorkspaceRow {
     my_permission: Option<Perm>,
 }
 
-const WS_COLS: &str = "w.id, w.name, w.description, w.legal_hold, w.created_at,
+const WS_COLS: &str = "w.id, w.name, w.description, w.legal_hold, w.review_period_days, w.created_at,
     (SELECT count(*) FROM guides g WHERE g.workspace_id = w.id AND g.deleted_at IS NULL) AS guide_count";
 
 async fn list(
@@ -137,6 +138,13 @@ struct UpdateWorkspace {
     name: Option<String>,
     description: Option<String>,
     legal_hold: Option<bool>,
+    /// Absent = unchanged, `null` = review reminders off, number = days.
+    #[serde(default, deserialize_with = "double_option")]
+    review_period_days: Option<Option<i32>>,
+}
+
+fn double_option<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<i32>>, D::Error> {
+    Ok(Some(Option::<i32>::deserialize(d)?))
 }
 
 async fn update(
@@ -150,6 +158,13 @@ async fn update(
         .require(Perm::Manage)?;
     if req.legal_hold.is_some() {
         require_admin(&a)?;
+    }
+    if let Some(Some(d)) = req.review_period_days
+        && !(1..=3650).contains(&d)
+    {
+        return Err(ApiError::bad(
+            "review_period_days must be between 1 and 3650, or null to turn reminders off",
+        ));
     }
     let mut tx = st.db.begin().await?;
     let mut changes = serde_json::Map::new();
@@ -178,6 +193,14 @@ async fn update(
             .execute(&mut *tx)
             .await?;
         changes.insert("legal_hold".into(), json!(h));
+    }
+    if let Some(p) = req.review_period_days {
+        sqlx::query("UPDATE workspaces SET review_period_days = $2 WHERE id = $1")
+            .bind(id)
+            .bind(p)
+            .execute(&mut *tx)
+            .await?;
+        changes.insert("review_period_days".into(), json!(p));
     }
     audit::record(
         &mut tx,

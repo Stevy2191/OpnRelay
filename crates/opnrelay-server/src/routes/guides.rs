@@ -27,6 +27,7 @@ pub fn router() -> Router<AppState> {
         .route("/guides/{id}", get(get_one).patch(update).delete(remove))
         .route("/guides/{id}/steps", put(put_steps))
         .route("/guides/{id}/publish", post(publish))
+        .route("/guides/{id}/reviewed", post(mark_reviewed))
         .route("/guides/{id}/duplicate", post(duplicate))
         .route("/guides/{id}/versions", get(list_versions))
         .route("/guides/{id}/versions/{v}", get(get_version))
@@ -56,12 +57,28 @@ pub struct GuideSummary {
     pub updated_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
     pub published_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub reviewed_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub review_due_at: Option<OffsetDateTime>,
+    pub needs_review: bool,
 }
 
+/// When a published guide is next due for review (NULL if it never is).
+/// Needs the `g` (guides) and `w` (workspaces) aliases.
+const REVIEW_DUE_SQL: &str =
+    "(CASE WHEN g.status = 'published' AND w.review_period_days IS NOT NULL
+        THEN g.reviewed_at + make_interval(days => w.review_period_days) END)";
+
+/// Needs the `g` (guides) and `w` (workspaces) aliases; also join `users u`.
 const SUMMARY_COLS: &str = "g.id, g.workspace_id, g.folder_id, g.title, g.description, g.status, g.classification,
     g.source, g.revision, g.current_version, g.tags, g.legal_hold, g.created_by, u.display_name AS author_name,
     (SELECT count(*) FROM steps s WHERE s.guide_id = g.id AND s.kind = 'action') AS step_count,
-    g.created_at, g.updated_at, g.published_at";
+    g.created_at, g.updated_at, g.published_at, g.reviewed_at,
+    (CASE WHEN g.status = 'published' AND w.review_period_days IS NOT NULL
+        THEN g.reviewed_at + make_interval(days => w.review_period_days) END) AS review_due_at,
+    COALESCE((CASE WHEN g.status = 'published' AND w.review_period_days IS NOT NULL
+        THEN g.reviewed_at + make_interval(days => w.review_period_days) END) < now(), false) AS needs_review";
 
 #[derive(Deserialize)]
 struct ListQuery {
@@ -69,6 +86,7 @@ struct ListQuery {
     folder_id: Option<Uuid>,
     q: Option<String>,
     status: Option<String>,
+    needs_review: Option<bool>,
     limit: Option<i64>,
 }
 
@@ -104,6 +122,9 @@ async fn list(
         qb.push(" AND g.status = ").push_bind(s.to_string());
     } else {
         qb.push(" AND g.status <> 'archived'");
+    }
+    if q.needs_review == Some(true) {
+        qb.push(format!(" AND {REVIEW_DUE_SQL} < now()"));
     }
     let search = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     if let Some(term) = search {
@@ -175,7 +196,8 @@ impl StepRow {
 
 pub async fn load_summary(conn: &mut PgConnection, id: Uuid) -> ApiResult<GuideSummary> {
     Ok(sqlx::query_as(&format!(
-        "SELECT {SUMMARY_COLS} FROM guides g LEFT JOIN users u ON u.id = g.created_by WHERE g.id = $1"
+        "SELECT {SUMMARY_COLS} FROM guides g JOIN workspaces w ON w.id = g.workspace_id
+         LEFT JOIN users u ON u.id = g.created_by WHERE g.id = $1"
     ))
     .bind(id)
     .fetch_one(&mut *conn)
@@ -668,7 +690,7 @@ async fn publish(
         .bind(a.user_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE guides SET status = 'published', current_version = $2, published_at = now() WHERE id = $1")
+    sqlx::query("UPDATE guides SET status = 'published', current_version = $2, published_at = now(), reviewed_at = now() WHERE id = $1")
         .bind(id)
         .bind(version)
         .execute(&mut *tx)
@@ -680,6 +702,40 @@ async fn publish(
         Event::new("guide.published")
             .target("guide", id)
             .meta(json!({"version": version})),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(load_full(&st, id, perm).await?))
+}
+
+/// "Still accurate": restart the review clock without a new version. Does not
+/// touch `revision`, so concurrent editors are not disturbed.
+async fn mark_reviewed(
+    State(st): State<AppState>,
+    CurrentUser(a): CurrentUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<GuideFull>> {
+    let (perm, _) = authz::guide_perm(&st.db, &a, id).await?;
+    perm.require(Perm::Edit)?;
+    let mut tx = st.db.begin().await?;
+    audit::lock(&mut tx).await?;
+    let status: String = sqlx::query_scalar("SELECT status FROM guides WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if status != "published" {
+        return Err(ApiError::bad(
+            "Only published guides can be marked as reviewed",
+        ));
+    }
+    sqlx::query("UPDATE guides SET reviewed_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut tx,
+        &a.audit(),
+        Event::new("guide.reviewed").target("guide", id),
     )
     .await?;
     tx.commit().await?;
