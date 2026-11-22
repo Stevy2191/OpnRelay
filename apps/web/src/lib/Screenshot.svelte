@@ -8,7 +8,8 @@
     highlight,
     alt = '',
     onpick,
-  }: { mediaId: string; highlight?: Rect; alt?: string; onpick?: (x: number, y: number, w: number, h: number) => void } = $props();
+    label = '',
+  }: { mediaId: string; highlight?: Rect; alt?: string; label?: string; onpick?: (x: number, y: number, w: number, h: number) => void } = $props();
 
   let natural = $state({ w: 0, h: 0 });
 
@@ -25,6 +26,9 @@
     onpick(Math.round(x), Math.round(y), natural.w, natural.h);
   }
 
+  // Reader-only action label; sits above the box, or below it when the box is near the top edge.
+  let labelBelow = $derived(!!highlight && natural.h > 0 && highlight.y / natural.h < 0.09);
+
   const pct = (v: number, total: number) => `${(v / total) * 100}%`;
 </script>
 
@@ -39,6 +43,14 @@
       style:width={pct(highlight.w, natural.w)}
       style:height={pct(highlight.h, natural.h)}
     ></div>
+    {#if label}
+      <span
+        class="hl-label"
+        class:below={labelBelow}
+        style:left={pct(highlight.x, natural.w)}
+        style:top={pct(labelBelow ? highlight.y + highlight.h : highlight.y, natural.h)}
+      >{label}</span>
+    {/if}
   {/if}
 </div>
 
@@ -47,4 +59,23 @@
   .shot img { max-width: 100%; height: auto; display: block; }
   .pickable { cursor: crosshair; }
   .hl { position: absolute; border: 3px solid var(--accent); border-radius: 6px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.18); pointer-events: none; }
+  .hl-label {
+    position: absolute;
+    transform: translateY(-100%);
+    max-width: 90%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0.12rem 0.45rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    background: var(--sig);
+    color: var(--btn-signal-text);
+    border-radius: 4px 4px 0 0;
+    pointer-events: none;
+  }
+  .hl-label.below { transform: none; border-radius: 0 0 4px 4px; }
 </style>
